@@ -54,7 +54,9 @@ function setApprovalPanel(open) {
   $("approval-tab").setAttribute("aria-expanded", String(open));
 }
 
-function error(message) { $("error").textContent = String(message); $("error").hidden = !message; }
+function error(message) {
+  for (const id of ["error", "settings-error"]) { $(id).textContent = String(message); $(id).hidden = !message; }
+}
 function el(tag, text, className) { const node = document.createElement(tag); if (text != null) node.textContent = text; if (className) node.className = className; return node; }
 function button(text, handler, className = "") { const node = el("button", text, className); node.type = "button"; node.onclick = () => Promise.resolve().then(handler).catch(e => error(e.message)); return node; }
 async function api(path, data = {}, post = false) {
@@ -119,7 +121,7 @@ class CustomSelect {
     this.popup.setAttribute("aria-label", name);
     select.before(this.wrapper);
     this.wrapper.append(select, this.trigger);
-    document.body.append(this.popup);
+    (select.closest("dialog") || document.body).append(this.popup);
     select.hidden = true;
     select.setAttribute("aria-hidden", "true");
     this.onChange = () => this.sync();
@@ -277,7 +279,7 @@ let toastTimer = null;
 function showToast(text, abovePrompt = false) {
   clearTimeout(toastTimer);
   const toast = $("toast");
-  (abovePrompt ? $("prompt-container") : document.body).append(toast);
+  (abovePrompt ? $("prompt-container") : $("settings").open ? $("settings") : document.body).append(toast);
   toast.classList.toggle("above-prompt", abovePrompt);
   toast.hidden = false;
   $("toast-message").textContent = text;
@@ -388,6 +390,7 @@ async function saveSettings() {
   $("toast").hidden = true;
   $("save-settings").disabled = true;
   $("exit-settings").disabled = true;
+  $("settings-back").disabled = true;
   $("save-settings").textContent = "저장 중…";
   const controls = ["model-select", "effort-select", "policy-select"].map($);
   const disabled = controls.map(control => control.disabled);
@@ -409,8 +412,7 @@ async function saveSettings() {
     if (selected === sid) {
       settingsDirty = false;
       render();
-      changeTab("chat");
-      document.querySelector('[data-tab="chat"]')?.focus({preventScroll: true});
+      closeSettings(true);
     }
     error("");
     showToast(selected === sid ? "설정이 저장됐어요" : (session?.name || "대화") + " 설정이 저장됐어요");
@@ -421,6 +423,7 @@ async function saveSettings() {
     settingsSaving = false;
     $("save-settings").disabled = false;
     $("exit-settings").disabled = false;
+    $("settings-back").disabled = false;
     $("save-settings").textContent = "설정 저장";
     controls.forEach((control, index) => { control.disabled = disabled[index]; });
     syncCustomSelects();
@@ -428,7 +431,38 @@ async function saveSettings() {
 }
 
 function getSession() { return state?.sessions.find(s => s.id === selected); }
+let settingsReturnTab = "chat", settingsOpener = null;
+function openSettings() {
+  if ($("settings").open) return;
+  settingsReturnTab = currentTab;
+  settingsOpener = document.activeElement;
+  currentTab = "settings";
+  CustomSelect.active?.close();
+  hideSidebar();
+  $("settings").showModal();
+  document.querySelector('[data-tab="settings"]').setAttribute("aria-expanded", "true");
+  $("settings-back").focus({preventScroll: true});
+  loadModels().catch(e => error(e.message));
+  loadAccount();
+}
+function restoreSettingsView() {
+  CustomSelect.active?.close();
+  currentTab = settingsReturnTab;
+  settingsDirty = false;
+  render(); error("");
+  document.querySelector('[data-tab="settings"]').setAttribute("aria-expanded", "false");
+  const target = settingsOpener?.isConnected && !settingsOpener.closest("#sidebar") ? settingsOpener : document.querySelector(`[data-tab="${currentTab}"]`);
+  target?.focus({preventScroll: true});
+  settingsOpener = null;
+}
+function closeSettings(force = false) {
+  if (!$("settings").open || (settingsSaving && !force)) return;
+  $("settings").close();
+  restoreSettingsView();
+}
 function changeTab(tab) {
+  if (tab === "settings") { openSettings(); return; }
+  if ($("settings").open) { closeSettings(); if ($("settings").open) return; }
   CustomSelect.active?.close();
   currentTab = tab;
   document.querySelectorAll(".view").forEach(n => n.classList.toggle("active", n.id === tab));
@@ -440,10 +474,6 @@ function changeTab(tab) {
   hideSidebar();
   $("composer").hidden = tab !== "chat";
   if (tab === "files") loadFiles().catch(e => error(e.message));
-  if (tab === "settings") {
-    loadModels().catch(e => error(e.message));
-    loadAccount();
-  }
 }
 function showSidebar() {
   CustomSelect.active?.close();
@@ -822,6 +852,11 @@ $("close-sidebar").onclick = () => {
 };
 $("scrim").onclick = hideSidebar;
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && $("settings").open) {
+    event.preventDefault();
+    if (CustomSelect.active) CustomSelect.active.close(); else closeSettings();
+    return;
+  }
   if (event.key === "Escape") { hideSidebar(); setApprovalPanel(false); $("open-sidebar").focus(); }
 });
 window.matchMedia("(max-width: 760px)").addEventListener("change", () => {
@@ -851,14 +886,14 @@ $("account-refresh").onclick = () => loadAccount(true);
 $("account-login-link").onclick = event => {
   if (telegram?.openLink) { event.preventDefault(); telegram.openLink(event.currentTarget.href); }
 };
-$("exit-settings").onclick = () => {
-  if (settingsSaving) return;
-  settingsDirty = false;
-  render();
-  changeTab("chat");
-  error("");
-  document.querySelector('[data-tab="chat"]')?.focus({preventScroll: true});
-};
+$("settings-back").onclick = $("exit-settings").onclick = () => closeSettings();
+$("settings").addEventListener("cancel", event => {
+  event.preventDefault();
+  if (CustomSelect.active) CustomSelect.active.close(); else closeSettings();
+});
+$("settings").addEventListener("close", () => {
+  if (!$("settings").open && currentTab === "settings") restoreSettingsView();
+});
 $("retry-job").onclick = () => command("/retry").catch(e => error(e.message));
 $("stop-job").onclick = () => command("/stop").catch(e => error(e.message));
 $("prompt-form").onsubmit = async event => {

@@ -131,7 +131,18 @@ pre { font-family: "SFMono-Regular", Consolas, monospace; white-space: pre-wrap;
 .file-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .file-size { color: #888; font-size: 10px; white-space: nowrap; }
 .file-row button { font-size: 11px; padding: 7px 9px; border: 1px solid var(--line); }
-#settings h2 { font-size: 22px; letter-spacing: -.5px; }
+#settings { position: fixed; inset: 0; margin: 0; padding: 0; width: 100%; max-width: none; height: var(--tg-viewport-height, 100dvh); max-height: none; border: 0; border-radius: 0; overflow: hidden; background: #212121; color: #ececec; }
+#settings[open] { display: flex; }
+#settings::backdrop { background: #212121; }
+.settings-shell { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+#settings .settings-header { flex: 0 0 auto; width: 100%; padding: max(12px, env(safe-area-inset-top), var(--tg-content-safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right)) 12px max(20px, env(safe-area-inset-left)); border-bottom: 1px solid var(--line); }
+.settings-header-inner { display: flex; align-items: center; gap: 18px; width: 100%; max-width: 720px; margin: 0 auto; }
+#settings .settings-header h2 { margin: 0; font-size: 18px; letter-spacing: -.3px; }
+#settings-back { display: inline-flex; align-items: center; gap: 7px; min-width: 64px; min-height: 44px; padding: 8px; font-size: 13px; color: #ddd; }
+#settings-back .glyph { width: 18px; height: 18px; }
+.settings-content { flex: 1; min-height: 0; width: 100%; max-width: 760px; margin: 0 auto; padding: 24px max(20px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); overflow-y: auto; overscroll-behavior: contain; }
+#settings-error { padding: 12px; margin-bottom: 16px; border-radius: 8px; background: #382b28; color: #e8b5a7; font-size: 12px; white-space: pre-wrap; line-height: 1.6; }
+#settings .toast { left: 50%; }
 .account-card { margin: 22px 0 28px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #ffffff03; }
 .account-card h3 { margin: 0 0 14px; font-size: 14px; color: #ddd; }
 #account-name { display: block; overflow-wrap: anywhere; font-size: 13px; color: #eee; }
