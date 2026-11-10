@@ -330,7 +330,10 @@ class SessionRuntime:
         if data.get("inflight"):
             data["interrupted_job"] = data.pop("inflight")
         self.active = None
+        self.deleting = False
+        self.transfers = 0
         self.turn_done = asyncio.Event()
+        self.turn_ready = asyncio.Event()
         self.session_ready = False
         self.effective = {}
         self.chunks = {}
@@ -350,6 +353,8 @@ class Bot:
         self.session_context = contextvars.ContextVar("cloudex_session", default=None)
         self.runtimes = {sid: SessionRuntime(base, sid, data) for sid, data in self.state["sessions"].items()}
         self.worker_tasks = {}
+        self.deletion_lock = asyncio.Lock()
+        self.deleted_threads = set(self.state.get("deleted_threads", []))
         self.started = False
         self.telegram = Telegram(config["bot_token"])
         self.codex = Codex(self.event)
@@ -391,28 +396,39 @@ class Bot:
 
     def event_sid(self, event):
         params = event.get("params", {})
-        thread = params.get("threadId") or params.get("conversationId")
-        return next((sid for sid, rt in self.runtimes.items() if thread and rt.data.get("thread_id") == thread),
-                    event.get("cloudex_session") or self.current_sid)
+        thread = params.get("threadId") or params.get("conversationId") or (params.get("thread") or {}).get("id")
+        fallback = event.get("cloudex_session")
+        if fallback is None:
+            fallback = self.current_sid if self.current_sid in self.runtimes else self.state["selected_session"]
+        return next((sid for sid, rt in self.runtimes.items() if thread and rt.data.get("thread_id") == thread), fallback)
 
     async def tell(self, text, session_id=None, **extra):
         sid = session_id or self.current_sid
-        label = self.runtimes[sid].data["name"]
+        rt = self.runtimes.get(sid)
+        if rt is None or rt.deleting:
+            return
+        label = rt.data["name"]
         await self.telegram.say(self.owner, f"[{label} · {sid}]\n{text}", **extra)
 
     def ensure_worker(self, sid):
+        if sid not in self.runtimes or self.runtimes[sid].deleting:
+            return
         if sid not in self.worker_tasks or self.worker_tasks[sid].done():
             self.worker_tasks[sid] = asyncio.create_task(self.work(sid))
 
-    def create_session(self, name="새 대화"):
-        if len(self.runtimes) >= 50:
-            raise ValueError("세션은 최대 50개입니다.")
+    def fresh_session_record(self, name="새 대화"):
         sid = secrets.token_hex(3)
-        while sid in self.runtimes:
+        while sid in self.runtimes or (self.base / "workspaces" / sid).exists():
             sid = secrets.token_hex(3)
         defaults = self.state.get("session_defaults", {})
         data = {"name": name[:60] or "새 대화",
                 **{key: defaults[key] for key in ("approvalPolicy", "sandbox") if key in defaults}}
+        return sid, data
+
+    def create_session(self, name="새 대화"):
+        if len(self.runtimes) >= 50:
+            raise ValueError("세션은 최대 50개입니다.")
+        sid, data = self.fresh_session_record(name)
         self.state["sessions"][sid] = data
         self.runtimes[sid] = SessionRuntime(self.base, sid, data)
         self.state["selected_session"] = sid
@@ -421,8 +437,76 @@ class Bot:
             self.ensure_worker(sid)
         return sid
 
+    async def delete_session(self, sid):
+        async with self.deletion_lock:
+            rt = self.runtimes.get(sid)
+            if rt is None:
+                raise ValueError("세션을 찾을 수 없습니다.")
+            if rt.deleting:
+                raise ValueError("이미 삭제 중인 세션입니다.")
+            if rt.active or rt.queue._unfinished_tasks:
+                raise ValueError("작업을 중단하고 대기열을 비운 뒤 삭제하세요.")
+            if rt.transfers:
+                raise ValueError("파일 첨부가 끝난 뒤 삭제하세요.")
+            rt.deleting = True
+            thread = rt.data.get("thread_id")
+            archived_here = False
+            try:
+                if thread and not rt.data.get("archived"):
+                    await self.codex.start()
+                    await self.codex.call("thread/archive", {"threadId": thread})
+                    archived_here = True
+                sessions = {key: value for key, value in self.state["sessions"].items() if key != sid}
+                available = [key for key in sessions if not sessions[key].get("archived")
+                             and not self.runtimes[key].deleting]
+                replacement = None
+                selected = self.state["selected_session"]
+                if not available:
+                    replacement_id, data = self.fresh_session_record()
+                    replacement = SessionRuntime(self.base, replacement_id, data)
+                    sessions[replacement_id] = data
+                    available = [replacement_id]
+                if selected == sid or selected not in available:
+                    selected = available[0]
+                deleted_threads = self.deleted_threads | ({thread} if thread else set())
+                next_state = {**self.state, "sessions": sessions, "selected_session": selected,
+                              "deleted_threads": sorted(deleted_threads)}
+                try:
+                    save_json(self.statepath, next_state)
+                except Exception:
+                    if archived_here:
+                        with contextlib.suppress(Exception):
+                            await self.codex.call("thread/unarchive", {"threadId": thread})
+                    raise
+                # Commit without yielding: other workers always see matching state/runtime maps.
+                self.state = next_state
+                self.deleted_threads = deleted_threads
+                self.runtimes.pop(sid)
+                if replacement is not None:
+                    self.runtimes[replacement_id] = replacement
+                workers = [task for task in (self.worker_tasks.pop(sid, None), self.event_tasks.pop(sid, None)) if task]
+                for task in workers:
+                    task.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+                events = self.session_events.pop(sid, None)
+                if events is not None:
+                    while not events.empty():
+                        events.get_nowait()
+                        events.task_done()
+                        self.events.task_done()
+                for key, request in list(self.approvals.items()):
+                    params = request.get("params", {})
+                    if request.get("cloudex_session") == sid or (thread and (params.get("threadId") or params.get("conversationId")) == thread):
+                        self.approvals.pop(key, None)
+                self.publish({"method": "cloudex/sessionDeleted", "cloudex_session": sid, "params": {"session": sid}})
+                if replacement is not None and self.started:
+                    self.ensure_worker(replacement_id)
+                return selected
+            finally:
+                rt.deleting = False
+
     def select_session(self, sid):
-        if sid not in self.runtimes or self.runtimes[sid].data.get("archived"):
+        if sid not in self.runtimes or self.runtimes[sid].data.get("archived") or self.runtimes[sid].deleting:
             raise ValueError("사용 가능한 세션 ID를 /sessions 에서 확인하세요.")
         self.state["selected_session"] = sid
         self.persist()
@@ -448,14 +532,21 @@ class Bot:
         # Never block JSON-RPC response reading on Telegram's network latency.
         method, params = event["method"], event.get("params", {})
         sid = self.event_sid(event)
+        thread = params.get("threadId") or params.get("conversationId") or (params.get("thread") or {}).get("id")
+        if thread in self.deleted_threads or sid not in self.runtimes:
+            if "id" in event:
+                await self.codex.send({"id": event["id"], "error": {"code": -32600, "message": "Session was deleted"}})
+            return
         event["cloudex_session"] = sid
         self.publish(event)
         rt = self.runtimes[sid]
         if method == "turn/started":
             rt.active = params["turn"]["id"]
+            rt.turn_ready.set()
         if method == "turn/completed":
             rt.active = None
             rt.turn_done.set()
+            rt.turn_ready.set()
         if method == "model/rerouted":
             rt.effective["model"] = params.get("toModel")
         if method == "cloudex/disconnected":
@@ -463,6 +554,7 @@ class Bot:
                 runtime.active = None
                 runtime.session_ready = False
                 runtime.turn_done.set()
+                runtime.turn_ready.set()
             self.approvals.clear()
             for runtime in self.runtimes.values():
                 runtime.chunks.clear()
@@ -474,6 +566,9 @@ class Bot:
         while True:
             event = await self.events.get()
             sid = event["cloudex_session"]
+            if sid not in self.runtimes or self.runtimes[sid].deleting:
+                self.events.task_done()
+                continue
             queue = self.session_events.setdefault(sid, asyncio.Queue())
             queue.put_nowait(event)
             if sid not in self.event_tasks or self.event_tasks[sid].done():
@@ -599,6 +694,7 @@ class Bot:
         while True:
             text = await self.queue.get()
             try:
+                self.runtime.turn_ready.clear()
                 pending = self.session_state.setdefault("pending", [])
                 if pending:
                     pending.pop(0)
@@ -626,31 +722,79 @@ class Bot:
                 if "effort" in args:
                     self.effective["reasoningEffort"] = args["effort"]
                 if result.get("turn", {}).get("status") not in ("completed", "interrupted", "failed"):
+                    if not self.turn_done.is_set():
+                        self.active = result.get("turn", {}).get("id") or self.active
+                    self.runtime.turn_ready.set()
                     await self.turn_done.wait()
             except asyncio.CancelledError:
-                self.session_state["interrupted_job"] = text
+                self.session_state["interrupted_job"] = self.session_state.get("inflight", text)
                 raise
             except Exception as exc:
                 LOG.error("작업 실패: %s", type(exc).__name__)
                 with contextlib.suppress(RuntimeError):
                     await self.tell("작업 오류: " + str(exc)[:1500])
             finally:
+                self.active = None
+                self.runtime.turn_ready.set()
                 self.session_state.pop("inflight", None)
                 self.persist()
                 self.queue.task_done()
 
     async def enqueue(self, text):
+        if self.runtime.deleting:
+            raise ValueError("삭제 중인 세션입니다.")
+        was_idle = not self.runtime.active and not self.queue._unfinished_tasks
         try:
             self.queue.put_nowait(text)
+            if was_idle:
+                self.runtime.turn_ready.clear()
             self.session_state.setdefault("pending", []).append(text)
             self.persist()
         except asyncio.QueueFull:
-            await self.tell("대기 작업이 20개입니다. 완료 후 다시 보내주세요.")
-            return
+            raise ValueError("대기 작업이 20개입니다. 완료 후 다시 보내주세요.") from None
         if self.started:
             self.ensure_worker(self.current_sid)
         self.background(self.tell(f"접수했습니다. 대기 {self.queue.qsize()}개 · /status · /stop",
                                   session_id=self.current_sid))
+
+    async def submit_message(self, text, mode="queue", expected_turn_id=None):
+        if self.runtime.deleting:
+            raise ValueError("삭제 중인 세션입니다.")
+        if mode not in ("queue", "steer"):
+            raise ValueError("대기열에 추가 또는 바로 적용을 선택하세요.")
+        if expected_turn_id is not None and (not isinstance(expected_turn_id, str)
+                or not expected_turn_id or len(expected_turn_id) > 200):
+            raise ValueError("실행 중인 작업 정보를 확인하세요.")
+        if mode == "queue":
+            await self.enqueue(text)
+            return {"delivery": "queue"}
+        rt = self.runtime
+        if expected_turn_id and rt.active != expected_turn_id:
+            raise ValueError("작업이 이미 끝났거나 바뀌었어요. 상태를 확인하고 다시 전송하세요.")
+        if not rt.active and rt.queue._unfinished_tasks:
+            if self.started:
+                self.ensure_worker(self.current_sid)
+            try:
+                await asyncio.wait_for(rt.turn_ready.wait(), 10)
+            except asyncio.TimeoutError:
+                raise ValueError("작업을 준비 중이에요. 잠시 후 바로 적용을 다시 눌러주세요.") from None
+        if not rt.active:
+            if expected_turn_id or rt.queue._unfinished_tasks:
+                raise ValueError("작업 상태가 바뀌었어요. 상태를 확인하고 다시 전송하세요.")
+            await self.enqueue(text)
+            return {"delivery": "start"}
+        turn_id = rt.active
+        if expected_turn_id and turn_id != expected_turn_id:
+            raise ValueError("작업이 바뀌었어요. 상태를 확인하고 다시 전송하세요.")
+        result = await self.codex.call("turn/steer", {
+            "threadId": rt.data["thread_id"], "expectedTurnId": turn_id,
+            "input": [{"type": "text", "text": text, "text_elements": []}]})
+        if rt.active == turn_id and rt.data.get("inflight"):
+            rt.data["inflight"] += "\n\n추가 지시:\n" + text
+            self.persist()
+        self.publish({"method": "cloudex/messageSteered", "cloudex_session": self.current_sid,
+                      "params": {"turnId": result.get("turnId", turn_id)}})
+        return {"delivery": "steer", "turnId": result.get("turnId", turn_id)}
 
     async def receive(self, update):
         update_id = update.get("update_id")
@@ -894,19 +1038,25 @@ class Bot:
             if msg.get("photo"):
                 attachment = msg["photo"][-1]
             if attachment:
+                if self.runtime.deleting:
+                    raise ValueError("삭제 중인 세션입니다.")
+                self.runtime.transfers += 1
                 self.background(self.receive_file(msg, attachment))
             elif text:
                 await self.enqueue(text)
 
     async def receive_file(self, msg, attachment):
+        rt = self.runtime
         try:
-            path = await self.telegram.download(attachment, self.root)
-            relative = str(path.relative_to(self.root))
+            path = await self.telegram.download(attachment, rt.root)
+            relative = str(path.relative_to(rt.root))
             await self.tell(f"파일 저장 완료: {relative}")
             if msg.get("caption"):
                 await self.enqueue(f"사용자 첨부 파일: {relative}\n요청: {msg['caption']}")
         except Exception as exc:
             await self.tell("파일 수신 실패: " + str(exc))
+        finally:
+            rt.transfers -= 1
 
     async def send_file(self, path):
         try:

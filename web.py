@@ -42,16 +42,20 @@ async def dispatch(bot, path, data):
            else data.get("session") or bot.state["selected_session"])
     if sid not in bot.runtimes:
         raise ValueError("세션을 찾을 수 없습니다.")
+    if path not in ("/api/status", "/api/events", "/api/models") and bot.runtimes[sid].deleting:
+        raise ValueError("삭제 중인 세션입니다.")
     context = bot.session_context.set(sid)
     try:
         if path == "/api/status":
             return {"selected": bot.state["selected_session"], "server": bot.server_id,
+                "messageModes": ["queue", "steer"], "canDeleteSessions": True,
                 "sessions": [{"id": key, "name": rt.data["name"], "archived": bool(rt.data.get("archived")),
                     "active": bool(rt.active or rt.queue._unfinished_tasks > rt.queue.qsize()), "queued": rt.queue.qsize(),
                     "model": rt.data.get("model") or rt.effective.get("model"), "effort": rt.data.get("effort"),
                     "policy": rt.data.get("approvalPolicy") or rt.effective.get("approvalPolicy"),
                     "sandbox": rt.data.get("sandbox"),
-                    "threadId": rt.data.get("thread_id"), "interrupted": bool(rt.data.get("interrupted_job")),
+                    "deleting": rt.deleting, "transferring": bool(rt.transfers),
+                    "threadId": rt.data.get("thread_id"), "activeTurnId": rt.active, "interrupted": bool(rt.data.get("interrupted_job")),
                     "effective": rt.effective} for key, rt in bot.runtimes.items()],
                 "approvals": [{"key": key, "session": bot.event_sid(event), "method": event["method"],
                     "params": event.get("params", {})} for key, event in bot.approvals.items()]}
@@ -68,15 +72,29 @@ async def dispatch(bot, path, data):
                     await asyncio.wait_for(bot.feed_changed.wait(), 20)
                 except asyncio.TimeoutError:
                     pass
+        if path == "/api/session/delete":
+            if data.get("confirm") is not True:
+                raise ValueError("세션 삭제를 확인해주세요.")
+            await bot.delete_session(sid)
+            status = await dispatch(bot, "/api/status", {})
+            return {"ok": True, "deleted": sid, **status}
         if path == "/api/command":
             if bot.runtime.data.get("archived"):
                 raise ValueError("보관된 세션은 먼저 복원하세요.")
-            text = data.get("text", "").strip()
-            if not text or len(text) > 30000:
+            text = data.get("text", "")
+            if not isinstance(text, str) or not text.strip() or len(text.strip()) > 30000:
                 raise ValueError("메시지는 1~30,000자로 입력하세요.")
-            await bot.receive_in_session({"message": {"chat": {"id": bot.owner, "type": "private"},
-                "from": {"id": bot.owner}, "text": text}})
-            return {"ok": True, "selected": bot.state["selected_session"]}
+            text = text.strip()
+            mode = data.get("mode", "queue")
+            if mode not in ("queue", "steer"):
+                raise ValueError("대기열에 추가 또는 바로 적용을 선택하세요.")
+            if text.startswith("/"):
+                await bot.receive_in_session({"message": {"chat": {"id": bot.owner, "type": "private"},
+                    "from": {"id": bot.owner}, "text": text}})
+                delivery = {"delivery": "command"}
+            else:
+                delivery = await bot.submit_message(text, mode, data.get("expectedTurnId"))
+            return {"ok": True, "selected": bot.state["selected_session"], **delivery}
         if path == "/api/models":
             await bot.codex.start()
             return await bot.codex.call("model/list", {"limit": 100, "cursor": data.get("cursor")})
@@ -135,8 +153,13 @@ async def dispatch(bot, path, data):
                     temp.replace(destination)
                 finally:
                     temp.unlink(missing_ok=True)
-            await asyncio.to_thread(write)
-            relative = str(destination.relative_to(bot.root))
+            rt = bot.runtime
+            rt.transfers += 1
+            try:
+                await asyncio.to_thread(write)
+            finally:
+                rt.transfers -= 1
+            relative = str(destination.relative_to(rt.root))
             bot.publish({"method": "cloudex/fileUploaded", "cloudex_session": sid, "params": {"path": relative}})
             return {"path": relative}
         raise ValueError("지원하지 않는 요청입니다.")

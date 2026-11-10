@@ -43,6 +43,8 @@ class FakeCodex:
             return {"thread": {"id": thread}, "model": "configured-model", "approvalPolicy": "untrusted"}
         if method == "turn/start":
             return {"turn": {"id": "turn1", "status": "inProgress"}}
+        if method == "turn/steer":
+            return {"turnId": args["expectedTurnId"]}
         return {}
 
     async def send(self, value):
@@ -415,6 +417,107 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*self.bot.worker_tasks.values(), *self.bot.tasks, return_exceptions=True)
             self.bot.started = False
 
+
+    async def test_queue_mode_defers_without_steering_active_turn(self):
+        await self.pair()
+        self.bot.session_state["thread_id"] = "thread-a"
+        self.bot.active = "active-a"
+        result = await self.bot.submit_message("later", "queue")
+        self.assertEqual(result, {"delivery": "queue"})
+        self.assertEqual(self.bot.queue.qsize(), 1)
+        self.assertFalse(any(m == "turn/steer" for m, _ in self.bot.codex.calls))
+        await asyncio.gather(*self.bot.tasks)
+
+    async def test_immediate_mode_steers_without_consuming_queue(self):
+        await self.pair()
+        self.bot.session_state.update(thread_id="thread-a", inflight="original")
+        self.bot.active = "active-a"
+        await self.bot.enqueue("already queued")
+        result = await self.bot.submit_message("change direction", "steer", "active-a")
+        self.assertEqual(result, {"delivery": "steer", "turnId": "active-a"})
+        self.assertEqual(self.bot.queue.qsize(), 1)
+        method, args = self.bot.codex.calls[-1]
+        self.assertEqual(method, "turn/steer")
+        self.assertEqual(args["threadId"], "thread-a")
+        self.assertEqual(args["expectedTurnId"], "active-a")
+        self.assertEqual(args["input"][0]["text"], "change direction")
+        self.assertIn("change direction", self.bot.session_state["inflight"])
+        await asyncio.gather(*self.bot.tasks)
+
+    async def test_immediate_mode_starts_when_idle(self):
+        await self.pair()
+        result = await self.bot.submit_message("start now", "steer")
+        self.assertEqual(result, {"delivery": "start"})
+        self.assertEqual(self.bot.queue.get_nowait(), "start now")
+        self.assertFalse(any(m == "turn/steer" for m, _ in self.bot.codex.calls))
+        self.bot.queue.task_done()
+        await asyncio.gather(*self.bot.tasks)
+
+    async def test_changed_turn_does_not_receive_correction_or_queue_it(self):
+        await self.pair()
+        self.bot.session_state["thread_id"] = "thread-a"
+        for current in (None, "replacement"):
+            self.bot.active = current
+            with self.assertRaises(ValueError):
+                await self.bot.submit_message("old correction", "steer", "old-turn")
+        self.assertEqual(self.bot.queue.qsize(), 0)
+        self.assertFalse(self.bot.codex.calls)
+
+    async def test_failed_steer_is_not_requeued_and_preserves_original(self):
+        await self.pair()
+        self.bot.session_state.update(thread_id="thread-a", inflight="original")
+        self.bot.active = "active-a"
+        async def failure(method, args):
+            raise RuntimeError("turn completed")
+        self.bot.codex.call = failure
+        with self.assertRaises(RuntimeError):
+            await self.bot.submit_message("correction", "steer", "active-a")
+        self.assertEqual(self.bot.queue.qsize(), 0)
+        self.assertEqual(self.bot.session_state["inflight"], "original")
+
+    async def test_immediate_mode_waits_for_a_starting_turn(self):
+        await self.pair()
+        preparing, release = asyncio.Event(), asyncio.Event()
+        original = self.bot.codex.call
+        async def slow_start(method, args):
+            if method == "thread/start":
+                preparing.set()
+                await release.wait()
+            return await original(method, args)
+        self.bot.codex.call = slow_start
+        self.bot.started = True
+        correction = None
+        try:
+            await self.bot.enqueue("first")
+            await asyncio.wait_for(preparing.wait(), .5)
+            correction = asyncio.create_task(self.bot.submit_message("correction", "steer"))
+            await asyncio.sleep(0)
+            self.assertFalse(correction.done())
+            release.set()
+            result = await asyncio.wait_for(correction, .5)
+            self.assertEqual(result["delivery"], "steer")
+            self.assertEqual(self.bot.queue.qsize(), 0)
+            self.assertEqual(sum(m == "turn/start" for m, _ in self.bot.codex.calls), 1)
+            self.assertEqual(sum(m == "turn/steer" for m, _ in self.bot.codex.calls), 1)
+        finally:
+            release.set()
+            if correction and not correction.done():
+                correction.cancel()
+            for task in self.bot.worker_tasks.values():
+                task.cancel()
+            await asyncio.gather(*self.bot.worker_tasks.values(), *self.bot.tasks, *([correction] if correction else []), return_exceptions=True)
+            self.bot.started = False
+
+    async def test_full_queue_rejects_extra_message(self):
+        await self.pair()
+        for index in range(20):
+            await self.bot.enqueue(str(index))
+        with self.assertRaises(ValueError):
+            await self.bot.submit_message("extra", "queue")
+        self.assertEqual(self.bot.queue.qsize(), 20)
+        self.assertEqual(len(self.bot.session_state["pending"]), 20)
+        await asyncio.gather(*self.bot.tasks)
+
     async def test_one_session_completion_preserves_other_approvals(self):
         await self.pair()
         second = self.bot.create_session('second')
@@ -468,6 +571,146 @@ class BotTests(unittest.IsolatedAsyncioTestCase):
         restarted = Bot(self.bot.config, self.base)
         self.assertEqual(restarted.queue.get_nowait(), 'pending work')
         self.assertEqual(restarted.session_state['interrupted_job'], 'partially completed work')
+
+
+    async def test_delete_session_preserves_files_and_other_session(self):
+        await self.pair()
+        second = self.bot.create_session("remove")
+        rt = self.bot.runtimes[second]
+        rt.data["thread_id"] = "deleted-thread"
+        (rt.root / "keep.txt").write_text("keep")
+        self.bot.runtimes["main"].data["model"] = "keep-model"
+        await self.bot.delete_session(second)
+        self.assertNotIn(second, self.bot.runtimes)
+        self.assertNotIn(second, self.bot.state["sessions"])
+        self.assertEqual(self.bot.state["selected_session"], "main")
+        self.assertEqual(self.bot.runtimes["main"].data["model"], "keep-model")
+        self.assertEqual((rt.root / "keep.txt").read_text(), "keep")
+        self.assertIn(("thread/archive", {"threadId": "deleted-thread"}), self.bot.codex.calls)
+        saved = json.loads(self.bot.statepath.read_text())
+        self.assertNotIn(second, saved["sessions"])
+        self.assertIn("deleted-thread", saved["deleted_threads"])
+
+    async def test_deleting_last_session_creates_empty_replacement_with_defaults(self):
+        await self.pair()
+        self.bot.state["session_defaults"] = {"approvalPolicy": "never", "sandbox": "danger-full-access"}
+        original_root = self.bot.root
+        (original_root / "keep.txt").write_text("original")
+        await self.bot.delete_session("main")
+        sid = self.bot.state["selected_session"]
+        self.assertNotEqual(sid, "main")
+        self.assertEqual(list(self.bot.runtimes), [sid])
+        self.assertEqual(self.bot.runtimes[sid].data["approvalPolicy"], "never")
+        self.assertNotIn("thread_id", self.bot.runtimes[sid].data)
+        self.assertEqual((original_root / "keep.txt").read_text(), "original")
+
+    async def test_busy_and_uploading_sessions_cannot_be_deleted(self):
+        await self.pair()
+        self.bot.create_session("other")
+        rt = self.bot.runtimes["main"]
+        rt.active = "active"
+        with self.assertRaises(ValueError):
+            await self.bot.delete_session("main")
+        rt.active = None
+        rt.transfers = 1
+        with self.assertRaises(ValueError):
+            await self.bot.delete_session("main")
+        rt.transfers = 0
+        token = self.bot.session_context.set("main")
+        try:
+            await self.bot.enqueue("pending")
+        finally:
+            self.bot.session_context.reset(token)
+        with self.assertRaises(ValueError):
+            await self.bot.delete_session("main")
+        self.assertIn("main", self.bot.runtimes)
+        self.assertFalse(rt.deleting)
+        await asyncio.gather(*self.bot.tasks)
+
+    async def test_failed_delete_keeps_metadata_and_unlocks_session(self):
+        await self.pair()
+        rt = self.bot.runtime
+        rt.data["thread_id"] = "native-thread"
+        async def failure(*args):
+            raise RuntimeError("archive unavailable")
+        self.bot.codex.call = failure
+        with self.assertRaises(RuntimeError):
+            await self.bot.delete_session("main")
+        self.assertIs(self.bot.runtimes["main"], rt)
+        self.assertFalse(rt.deleting)
+        self.assertNotIn("native-thread", self.bot.deleted_threads)
+
+    async def test_failed_delete_persistence_restores_native_archive(self):
+        await self.pair()
+        rt = self.bot.runtime
+        rt.data["thread_id"] = "native-thread"
+        with patch("bot.save_json", side_effect=OSError("disk unavailable")):
+            with self.assertRaises(OSError):
+                await self.bot.delete_session("main")
+        self.assertIs(self.bot.runtimes["main"], rt)
+        self.assertFalse(rt.deleting)
+        self.assertEqual(self.bot.codex.calls[-1], ("thread/unarchive", {"threadId": "native-thread"}))
+
+    async def test_deleted_session_events_cannot_change_surviving_session(self):
+        await self.pair()
+        self.bot.session_state["thread_id"] = "old-thread"
+        second = self.bot.create_session("keep")
+        await self.bot.delete_session("main")
+        rt = self.bot.runtimes[second]
+        rt.data["thread_id"] = "keep-thread"
+        rt.active = "keep-turn"
+        await self.bot.event({"method": "turn/completed", "params": {"threadId": "old-thread", "turn": {"status": "completed"}}})
+        self.assertEqual(rt.active, "keep-turn")
+        self.assertFalse(rt.turn_done.is_set())
+        await self.bot.event({"id": 777, "method": "item/commandExecution/requestApproval", "params": {"threadId": "old-thread"}})
+        self.assertEqual(self.bot.codex.sent[-1]["id"], 777)
+        self.assertIn("error", self.bot.codex.sent[-1])
+        token = self.bot.session_context.set("main")
+        try:
+            await self.bot.event({"method": "cloudex/disconnected", "params": {}})
+        finally:
+            self.bot.session_context.reset(token)
+        self.assertIsNone(rt.active)
+        self.assertTrue(rt.turn_done.is_set())
+
+    async def test_deletion_stops_old_event_delivery_without_blocking_other_sessions(self):
+        await self.pair()
+        second = self.bot.create_session("remove")
+        self.bot.runtimes[second].data["thread_id"] = "remove-thread"
+        blocked, release = asyncio.Event(), asyncio.Event()
+        async def notification(*args, **kwargs):
+            blocked.set()
+            await release.wait()
+        self.bot.telegram.say = notification
+        dispatcher = asyncio.create_task(self.bot.event_worker())
+        try:
+            await self.bot.event({"method": "item/completed", "params": {"threadId": "remove-thread", "item": {"type": "agentMessage", "text": "old"}}})
+            await asyncio.wait_for(blocked.wait(), .5)
+            await self.bot.event({"method": "item/completed", "params": {"threadId": "remove-thread", "item": {"type": "agentMessage", "text": "queued"}}})
+            await self.bot.delete_session(second)
+            await asyncio.wait_for(self.bot.events.join(), .5)
+            self.assertNotIn(second, self.bot.event_tasks)
+            self.assertNotIn(second, self.bot.session_events)
+        finally:
+            release.set()
+            dispatcher.cancel()
+            for task in self.bot.event_tasks.values():
+                task.cancel()
+            await asyncio.gather(dispatcher, *self.bot.event_tasks.values(), return_exceptions=True)
+
+    async def test_concurrent_deletes_leave_one_valid_session_and_never_reuse_files(self):
+        await self.pair()
+        second = self.bot.create_session("other")
+        root = self.bot.runtimes[second].root
+        (root / "keep.txt").write_text("private")
+        await asyncio.gather(self.bot.delete_session("main"), self.bot.delete_session(second))
+        self.assertEqual(len(self.bot.runtimes), 1)
+        self.assertIn(self.bot.state["selected_session"], self.bot.runtimes)
+        self.assertEqual((root / "keep.txt").read_text(), "private")
+        with patch("bot.secrets.token_hex", side_effect=[second, "abcdef"]):
+            sid = self.bot.create_session("new")
+        self.assertEqual(sid, "abcdef")
+        self.assertNotEqual(self.bot.runtimes[sid].root, root)
 
     async def test_archive_refuses_busy_or_last_session(self):
         await self.pair()

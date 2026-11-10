@@ -61,6 +61,101 @@ class WebApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.runtimes[second].queue.qsize(), 0)
         self.assertEqual(self.bot.state['selected_session'], second)
 
+
+    async def test_message_mode_and_active_turn_are_exposed_and_session_scoped(self):
+        await self.pair()
+        second = self.bot.create_session("other")
+        for sid, thread, turn in [("main", "thread-main", "turn-main"), (second, "thread-other", "turn-other")]:
+            self.bot.runtimes[sid].data["thread_id"] = thread
+            self.bot.runtimes[sid].active = turn
+        status = await dispatch(self.bot, "/api/status", {})
+        self.assertEqual(status["messageModes"], ["queue", "steer"])
+        main = next(row for row in status["sessions"] if row["id"] == "main")
+        self.assertEqual(main["activeTurnId"], "turn-main")
+        result = await dispatch(self.bot, "/api/command", {"session": "main", "text": "correct it", "mode": "steer", "expectedTurnId": "turn-main"})
+        self.assertEqual(result["delivery"], "steer")
+        self.assertEqual(self.bot.codex.calls[-1][1]["threadId"], "thread-main")
+        self.assertEqual(self.bot.runtimes[second].active, "turn-other")
+        self.assertEqual(self.bot.state["selected_session"], second)
+        self.assertEqual(self.bot.runtimes["main"].queue.qsize(), 0)
+
+    async def test_invalid_mode_and_stale_turn_never_enter_queue(self):
+        await self.pair()
+        self.bot.session_state["thread_id"] = "main-thread"
+        self.bot.active = "current"
+        for extra in [{"mode": "unknown"}, {"mode": "steer", "expectedTurnId": "old"}, {"mode": "steer", "expectedTurnId": 42}]:
+            with self.assertRaises(ValueError):
+                await dispatch(self.bot, "/api/command", {"text": "keep this draft", **extra})
+        self.assertFalse(self.bot.codex.calls)
+        self.assertEqual(self.bot.queue.qsize(), 0)
+
+    async def test_delivery_mode_preserves_control_commands(self):
+        await self.pair()
+        second = self.bot.create_session("other")
+        result = await dispatch(self.bot, "/api/command", {"session": "main", "text": "/use main", "mode": "steer"})
+        self.assertEqual(result["delivery"], "command")
+        self.assertEqual(result["selected"], "main")
+        self.assertEqual(self.bot.runtimes[second].queue.qsize(), 0)
+        await asyncio.gather(*self.bot.tasks)
+
+
+    async def test_delete_requires_explicit_confirmation_and_returns_current_state(self):
+        await self.pair()
+        second = self.bot.create_session("remove")
+        for confirmation in (None, False, "true", 1):
+            with self.assertRaises(ValueError):
+                await dispatch(self.bot, "/api/session/delete", {"session": second, "confirm": confirmation})
+        result = await dispatch(self.bot, "/api/session/delete", {"session": second, "confirm": True})
+        self.assertEqual(result["deleted"], second)
+        self.assertEqual(result["selected"], "main")
+        self.assertTrue(result["canDeleteSessions"])
+        self.assertEqual([row["id"] for row in result["sessions"]], ["main"])
+
+    async def test_archived_sessions_can_be_deleted_without_restoring(self):
+        await self.pair()
+        second = self.bot.create_session("archived")
+        self.bot.runtimes[second].data.update(archived=True, thread_id="archived-thread")
+        self.bot.select_session("main")
+        result = await dispatch(self.bot, "/api/session/delete", {"session": second, "confirm": True})
+        self.assertEqual(result["selected"], "main")
+        self.assertNotIn(second, self.bot.runtimes)
+        self.assertFalse(any(method == "thread/unarchive" for method, _ in self.bot.codex.calls))
+
+    async def test_deleting_session_rejects_new_requests(self):
+        await self.pair()
+        self.bot.runtime.deleting = True
+        for path, body in [("/api/command", {"text": "new job"}), ("/api/settings", {"model": "other"}), ("/api/upload", {"name": "file.txt", "content": "eA=="})]:
+            with self.assertRaises(ValueError):
+                await dispatch(self.bot, path, body)
+        status = await dispatch(self.bot, "/api/status", {})
+        self.assertTrue(status["sessions"][0]["deleting"])
+        self.assertEqual(self.bot.queue.qsize(), 0)
+
+    async def test_upload_in_progress_blocks_deletion_until_write_finishes(self):
+        await self.pair()
+        started, release = asyncio.Event(), asyncio.Event()
+        original = asyncio.to_thread
+        async def slow_write(function, *args):
+            started.set()
+            await release.wait()
+            return await original(function, *args)
+        upload = None
+        try:
+            with fixtures.patch("web.asyncio.to_thread", new=slow_write):
+                upload = asyncio.create_task(dispatch(self.bot, "/api/upload", {"session": "main", "name": "keep.txt", "content": "eA=="}))
+                await asyncio.wait_for(started.wait(), .5)
+                self.assertEqual(self.bot.runtimes["main"].transfers, 1)
+                with self.assertRaises(ValueError):
+                    await self.bot.delete_session("main")
+                release.set()
+                result = await asyncio.wait_for(upload, .5)
+                self.assertEqual(self.bot.runtimes["main"].transfers, 0)
+                self.assertTrue((self.bot.runtimes["main"].root / result["path"]).exists())
+        finally:
+            release.set()
+            if upload is not None:
+                await asyncio.gather(upload, return_exceptions=True)
+
     async def test_settings_are_saved_only_for_target_session(self):
         await self.pair()
         second = self.bot.create_session('second')

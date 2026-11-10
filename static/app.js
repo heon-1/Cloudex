@@ -8,9 +8,10 @@ let selected = null, state = null, cursor = 0, server = "", models = [], history
 let showArchived = false, approvalSignature = "", currentTab = "chat", stopped = false;
 let settingsDirty = false;
 const transcriptNodes = new Map(), logs = new Map(), messageTexts = new Map();
-const drafts = new Map(), sending = new Set(), uploading = new Set();
+const drafts = new Map(), sending = new Set(), uploading = new Set(), deliveryModes = new Map();
+const deletingSessions = new Set(), deletedSessions = new Set();
 function saveDraft(sid = selected) {
-  if (!sid) return;
+  if (!sid || deletedSessions.has(sid)) return;
   drafts.set(sid, {text: $("prompt").value, attachment: $("attachment-note").hidden ? "" : $("attachment-note").textContent});
 }
 function restoreDraft(sid = selected) {
@@ -18,6 +19,7 @@ function restoreDraft(sid = selected) {
   $("prompt").value = draft.text;
   $("attachment-note").textContent = draft.attachment;
   $("attachment-note").hidden = !draft.attachment;
+  $("delivery-mode").value = deliveryModes.get(sid) || "queue";
   fitPrompt();
 }
 let sessionQuery = "";
@@ -32,9 +34,20 @@ function fitPrompt() {
   const input = $("prompt");
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 180) + "px";
-  input.disabled = sending.has(selected);
-  $("send").disabled = !auth || !input.value.trim() || sending.has(selected) || uploading.has(selected);
-  $("attach").disabled = sending.has(selected) || uploading.has(selected);
+  const removing = deletingSessions.has(selected) || deletedSessions.has(selected) || getSession()?.deleting;
+  input.disabled = sending.has(selected) || !!removing;
+  $("send").disabled = !auth || !input.value.trim() || sending.has(selected) || uploading.has(selected) || !!removing;
+  $("attach").disabled = sending.has(selected) || uploading.has(selected) || !!removing;
+  const mode = $("delivery-mode"), immediate = mode.value === "steer";
+  const supported = state?.messageModes?.includes("steer") === true;
+  Array.from(mode.options).find(option => option.value === "steer").disabled = !supported;
+  mode.disabled = sending.has(selected) || !!removing;
+  if (immediate && !supported) $("send").disabled = true;
+  const label = immediate ? "바로 적용" : getSession()?.active ? "대기열에 추가" : "메시지 보내기";
+  $("send").title = label;
+  $("send").setAttribute("aria-label", label);
+  $("composer-hint").textContent = (immediate ? "Enter 바로 적용" : "Enter 대기열 추가") + " · Shift+Enter 줄바꿈";
+  customSelects.get(mode)?.sync();
 }
 function setApprovalPanel(open) {
   $("approval-panel").hidden = !open;
@@ -336,6 +349,7 @@ function hideSidebar() {
   $("open-sidebar").setAttribute("aria-expanded", String(!window.matchMedia("(max-width: 760px)").matches && !document.body.classList.contains("sidebar-collapsed")));
 }
 async function selectSession(sid, notify = true) {
+  if (deletedSessions.has(sid)) return;
   const sequence = ++selectionSequence;
   saveDraft();
   selected = sid;
@@ -353,18 +367,62 @@ async function selectSession(sid, notify = true) {
     currentTab === "files" ? loadFiles().catch(e => { if (sequence === selectionSequence) error(e.message); }) : Promise.resolve()
   ]);
 }
-async function refresh() {
-  const next = await api("/api/status");
-  state = next;
-  if (!selected || !state.sessions.some(s => s.id === selected && !s.archived)) {
-    saveDraft();
-    selected = state.selected;
-    rememberSession(selected);
-    restoreDraft(selected);
+function forgetSession(sid) {
+  deletedSessions.add(sid);
+  drafts.delete(sid);
+  logs.delete(sid);
+  deliveryModes.delete(sid);
+}
+function mayDeleteSession(entry) {
+  return !!state?.canDeleteSessions && !!entry && !entry.active && !entry.queued && !entry.transferring &&
+    !entry.deleting && !deletingSessions.has(entry.id) && !deletedSessions.has(entry.id) && !sending.has(entry.id) && !uploading.has(entry.id);
+}
+async function deleteSession(sid) {
+  const entry = state?.sessions.find(session => session.id === sid);
+  if (!entry || deletingSessions.has(sid)) return;
+  if (!mayDeleteSession(entry)) {
+    error(state?.canDeleteSessions ? "작업과 파일 첨부를 끝내고 대기열을 비운 뒤 삭제하세요." : "현재 연결에서는 세션 삭제를 사용할 수 없어요. 미니앱을 다시 열어주세요.");
+    return;
   }
+  CustomSelect.active?.close();
+  if (!confirm("‘" + entry.name + "’ 세션을 삭제할까요?\n이 앱에서는 복원할 수 없습니다. 작업 파일은 서버에 남습니다.")) return;
+  deletingSessions.add(sid);
+  clearTimeout(toastTimer);
+  $("toast").hidden = true;
+  render();
+  try {
+    const result = await api("/api/session/delete", {session: sid, confirm: true}, true);
+    forgetSession(sid);
+    state = result;
+    error("");
+    if (selected === sid || !state.sessions.some(session => session.id === selected && !session.archived)) {
+      await selectSession(result.selected, false);
+    } else render();
+    showToast("세션을 삭제했어요");
+  } catch (e) {
+    error(e.message);
+  } finally {
+    deletingSessions.delete(sid);
+    render();
+  }
+}
+async function refresh() {
+  const initial = !state;
+  const next = await api("/api/status");
+  for (const previous of state?.sessions || []) {
+    if (!next.sessions.some(session => session.id === previous.id)) forgetSession(previous.id);
+  }
+  state = next;
   $("connection").textContent = "Ubuntu에 연결됨";
   document.body.classList.add("connected");
-  render();
+  if (!selected || !state.sessions.some(session => session.id === selected && !session.archived)) {
+    if (initial) {
+      selected = state.selected;
+      rememberSession(selected);
+      restoreDraft(selected);
+      render();
+    } else await selectSession(state.selected, false);
+  } else render();
 }
 function render() {
   if (!state) return;
@@ -382,11 +440,13 @@ function render() {
   $("composer-policy").textContent = fullAccess ? "항상 승인 · 전체 액세스" : ({"on-request": "필요 시 승인", untrusted: "작업 승인 필요", never: "추가 권한 요청 거절"})[session.policy] || "기본 권한";
   document.body.classList.toggle("working", session.active);
   $("stop-job").hidden = !session.active;
+  $("delete-session").disabled = !mayDeleteSession(session);
+  $("delete-session").title = session.active || session.queued ? "작업을 중단하고 대기열을 비운 뒤 삭제하세요" : "세션 삭제";
   $("effective-settings").textContent = JSON.stringify(session.effective || {}, null, 2);
   $("retry-job").hidden = !session.interrupted;
   $("console-output").textContent = logs.get(selected) || "실행 로그가 여기에 표시됩니다.";
   const entries = state.sessions.filter(s => (showArchived ? s.archived : !s.archived) && (s.name + " " + s.id).toLocaleLowerCase().includes(sessionQuery));
-  const navSignature = JSON.stringify([selected, showArchived, sessionQuery, entries.map(s => [s.id, s.name, s.archived, s.active, s.queued])]);
+  const navSignature = JSON.stringify([selected, showArchived, sessionQuery, entries.map(s => [s.id, s.name, s.archived, s.active, s.queued, mayDeleteSession(s)])]);
   if (navSignature !== sessionListSignature) {
     sessionListSignature = navSignature;
     const nav = $("session-list"); nav.replaceChildren();
@@ -400,7 +460,14 @@ function render() {
       if (entry.id === selected) node.setAttribute("aria-current", "page");
       const info = el("small", entry.archived ? "복원" : entry.active ? "●" : entry.queued ? String(entry.queued) : "", entry.active ? "running" : "");
       if (entry.active) info.setAttribute("aria-label", "작업 실행 중");
-      node.append(info); nav.append(node);
+      node.append(info);
+      const row = el("div", null, "session-row");
+      const remove = button("삭제", () => deleteSession(entry.id), "session-delete");
+      remove.disabled = !mayDeleteSession(entry);
+      remove.setAttribute("aria-label", entry.name + " 세션 삭제");
+      remove.title = entry.active || entry.queued ? "작업을 중단하고 대기열을 비운 뒤 삭제하세요" : "세션 삭제";
+      row.append(node, remove);
+      nav.append(row);
     }
     if (!entries.length) nav.append(el("p", sessionQuery ? "검색 결과가 없습니다." : showArchived ? "보관된 대화가 없습니다." : "새 대화를 시작하세요.", "session-empty"));
   }
@@ -415,6 +482,7 @@ function render() {
     $("policy-select").value = fullAccess ? "full-access" : typeof session.policy === "string" ? session.policy : "";
   }
   syncCustomSelects();
+  fitPrompt();
 }
 function inlineMarkdown(node, text) {
   // Construct only text and known elements; model output never becomes HTML.
@@ -512,6 +580,13 @@ function log(sid, line) {
 }
 function nativeEvent(event) {
   const sid = event.cloudex_session || selected, params = event.params || {};
+  if (event.method === "cloudex/sessionDeleted") {
+    forgetSession(params.session || sid);
+    fitPrompt();
+    refresh().catch(e => error(e.message));
+    return;
+  }
+  if (deletedSessions.has(sid)) return;
   if (event.method === "item/commandExecution/outputDelta") log(sid, params.delta || "");
   else if (["item/started", "item/completed"].includes(event.method)) {
     const item = params.item || {};
@@ -616,6 +691,7 @@ $("session-search").oninput = event => { sessionQuery = event.target.value.trim(
 $("archived-toggle").onclick = () => { showArchived = !showArchived; $("archived-toggle").textContent = showArchived ? "모든 대화" : "보관함"; $("archived-toggle").setAttribute("aria-pressed", String(showArchived)); render(); };
 $("new-session").onclick = async () => { try { const name = prompt("새 세션 이름", "새 대화"); if (name === null) return; const result = await command(`/new ${name}`); await selectSession(result.selected, false); } catch(e) { error(e.message); } };
 $("rename-session").onclick = async () => { const name = prompt("세션 이름", getSession()?.name); if (name) await command(`/rename ${name}`).catch(e => error(e.message)); };
+$("delete-session").onclick = () => deleteSession(selected);
 $("archive-session").onclick = async () => { if (confirm("이 세션을 보관할까요? 대화와 파일은 유지됩니다.")) { try { const result = await command(`/archive ${selected}`); await selectSession(result.selected, false); } catch(e) { error(e.message); } } };
 document.querySelectorAll("[data-tab]").forEach(n => n.onclick = () => changeTab(n.dataset.tab));
 $("model-shortcut").onclick = $("effort-shortcut").onclick = $("policy-shortcut").onclick = () => changeTab("settings");
@@ -640,15 +716,25 @@ $("stop-job").onclick = () => command("/stop").catch(e => error(e.message));
 $("prompt-form").onsubmit = async event => {
   event.preventDefault();
   const input = $("prompt"), raw = input.value, text = raw.trim(), sid = selected;
-  if (!sid || !text || !auth || sending.has(sid) || uploading.has(sid)) return;
+  if (!sid || !text || !auth || sending.has(sid) || uploading.has(sid) || deletingSessions.has(sid) || deletedSessions.has(sid)) return;
+  const mode = $("delivery-mode").value;
+  if (mode === "steer" && !state?.messageModes?.includes("steer")) {
+    error("현재 연결에서는 바로 적용을 사용할 수 없어요. 미니앱을 다시 열어주세요.");
+    return;
+  }
+  const expectedTurnId = mode === "steer" ? state?.sessions.find(entry => entry.id === sid)?.activeTurnId || null : null;
   saveDraft(sid);
   sending.add(sid);
   fitPrompt();
   try {
-    await api("/api/command", {text, session: sid}, true);
+    const result = await api("/api/command", {text, session: sid, mode, ...(expectedTurnId ? {expectedTurnId} : {})}, true);
     if (selected === sid) saveDraft(sid);
     if (drafts.get(sid)?.text === raw) drafts.set(sid, {text: "", attachment: ""});
-    if (selected === sid) error("");
+    if (selected === sid) {
+      error("");
+      const confirmation = {queue: "대기열에 추가했어요", steer: "현재 작업에 전달했어요", start: "새 작업을 접수했어요", command: "명령을 적용했어요"}[result.delivery];
+      if (confirmation) showToast(confirmation);
+    }
     refresh().catch(e => error(e.message));
   } catch (e) {
     const name = state?.sessions.find(entry => entry.id === sid)?.name || sid;
@@ -657,6 +743,10 @@ $("prompt-form").onsubmit = async event => {
     sending.delete(sid);
     if (selected === sid) restoreDraft(sid);
   }
+};
+$("delivery-mode").onchange = () => {
+  deliveryModes.set(selected, $("delivery-mode").value);
+  fitPrompt();
 };
 $("prompt").oninput = () => { saveDraft(); fitPrompt(); };
 $("prompt").onkeydown = event => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); $("prompt-form").requestSubmit(); } };
@@ -689,7 +779,7 @@ $("file-input").onchange = async event => {
   }
 };
 async function init() {
-  ["model-select", "effort-select", "policy-select"].map($).forEach(enhanceSelect);
+  ["model-select", "effort-select", "policy-select", "delivery-mode"].map($).forEach(enhanceSelect);
   fitPrompt();
   hideSidebar();
   if (!auth) { error("텔레그램의 Cloudex 봇에서 미니앱을 열어주세요. 아직 공개 주소가 없다면 서버 연결 설정을 먼저 완료하세요."); $("connection").textContent = "텔레그램 인증 필요"; return; }

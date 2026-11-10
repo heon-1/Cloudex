@@ -248,3 +248,30 @@ body.sidebar-collapsed .toast { left: 50%; }
   .toast:not([hidden]) { animation: toast-in .16s ease-out; }
   @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 }
+
+.delivery-control { flex-shrink: 0; margin-left: auto; }
+.delivery-control .custom-select { width: auto; }
+.delivery-control .custom-select-trigger { min-height: 28px; padding: 4px 7px; gap: 9px; font-size: 11px; background: transparent; border-color: transparent; color: #b5b5b5; border-radius: 6px; }
+.delivery-control .custom-select-trigger:hover, .delivery-control .custom-select-trigger[aria-expanded="true"] { background: #ffffff09; border-color: #ffffff12; }
+.delivery-control .custom-select-caret { width: 6px; height: 6px; }
+.composer-footer { gap: 10px; flex-wrap: wrap; }
+#composer-hint { margin-left: auto; }
+@media (max-width: 760px) {
+  .delivery-control .custom-select-trigger { min-height: 32px; font-size: 11px; }
+  .composer-footer { padding-top: 5px; }
+}
+
+.session-row { display: flex; align-items: center; gap: 3px; }
+.session-row .session { flex: 1; min-width: 0; width: auto; }
+.session-delete { flex-shrink: 0; min-height: 34px; padding: 6px; color: #a98d8a; font-size: 10px; }
+.session-delete:hover, #delete-session:hover { color: #f0b0a8; background: #d8857b12; }
+#delete-session { width: 27px; height: 27px; color: #aa908c; }
+#delete-session .glyph { width: 15px; height: 15px; }
+@media (hover: hover) {
+  .session-delete { opacity: 0; }
+  .session-row:hover .session-delete, .session-row:focus-within .session-delete { opacity: 1; }
+}
+@media (max-width: 760px) {
+  #delete-session { width: 32px; height: 32px; }
+  .session-delete { min-width: 34px; min-height: 38px; }
+}
