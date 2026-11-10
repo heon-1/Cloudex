@@ -132,6 +132,16 @@ pre { font-family: "SFMono-Regular", Consolas, monospace; white-space: pre-wrap;
 .file-size { color: #888; font-size: 10px; white-space: nowrap; }
 .file-row button { font-size: 11px; padding: 7px 9px; border: 1px solid var(--line); }
 #settings h2 { font-size: 22px; letter-spacing: -.5px; }
+.account-card { margin: 22px 0 28px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #ffffff03; }
+.account-card h3 { margin: 0 0 14px; font-size: 14px; color: #ddd; }
+#account-name { display: block; overflow-wrap: anywhere; font-size: 13px; color: #eee; }
+#account-plan { margin: 5px 0 0; font-size: 12px; color: #999; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.account-actions button, #account-login-link { min-height: 40px; }
+.account-error { color: #e8b5a7; }
+#account-login-pending { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+#account-code { display: block; width: fit-content; padding: 10px 16px; margin: 12px 0; border-radius: 8px; background: #0003; font-size: 22px; letter-spacing: 3px; user-select: all; color: #eee; }
+#account-login-link { display: inline-flex; align-items: center; text-decoration: none; }
 #settings label { display: block; font-size: 12px; margin: 24px 0 9px; color: #bbb; }
 select { width: 100%; padding: 12px; background: #2b2b2b; color: #ddd; border: 1px solid #ffffff1a; border-radius: 8px; font-size: 12px; }
 .settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 22px; }

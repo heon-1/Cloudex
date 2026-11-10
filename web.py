@@ -37,6 +37,15 @@ def validate_init_data(raw, token, owner, now=None):
 
 
 async def dispatch(bot, path, data):
+    # Account controls belong to the paired owner, independently of any session.
+    if path == "/api/account":
+        return await bot.accounts.read()
+    if path == "/api/account/save":
+        return await bot.accounts.save()
+    if path == "/api/account/login":
+        return await bot.accounts.start_login()
+    if path == "/api/account/cancel":
+        return await bot.accounts.cancel_login()
     # Global reads must work even when a WebView remembers a deleted session.
     sid = (bot.state["selected_session"] if path in ("/api/status", "/api/events", "/api/models")
            else data.get("session") or bot.state["selected_session"])
@@ -225,7 +234,7 @@ class MiniApp:
                             raise ValueError("JSON 객체가 필요합니다.")
                     else:
                         data = {k: v[-1] for k, v in parse_qs(parsed.query).items()}
-                        if path not in ("/api/status", "/api/events", "/api/files", "/api/history", "/api/models", "/api/download"):
+                        if path not in ("/api/status", "/api/events", "/api/files", "/api/history", "/api/models", "/api/download", "/api/account"):
                             raise ValueError("이 요청에는 POST가 필요합니다.")
                     if path == "/api/download":
                         sid = data.get("session") or app.bot.state["selected_session"]

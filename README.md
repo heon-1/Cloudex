@@ -10,6 +10,7 @@ Python 서버와 HTML/CSS/JavaScript 화면으로 구성되며, Python 외부 �
 - 메시지를 대기열에 추가하거나 실행 중인 작업에 바로 전달
 - 작업 진행 상황과 대화 내역 표시, 작업 중단
 - 모델·추론 수준·승인 정책 설정
+- 현재 Codex 계정 확인·저장 및 기기 코드를 이용한 다시 로그인
 - 실행 승인과 추가 질문 응답
 - 작업 파일 업로드·다운로드
 - Telegram 미니앱 인증과 소유자 페어링
@@ -80,6 +81,7 @@ python3 -m unittest discover -v
 | 경로 | 용도 |
 | --- | --- |
 | `bot.py` | Telegram 봇, Codex 연결, 세션·작업 관리 |
+| `accounts.py` | 계정 정보 저장과 Codex 기기 코드 로그인 |
 | `web.py` | 미니앱 HTTP 서버와 인증된 API |
 | `tunnel.py` | 임시 HTTPS 터널과 메뉴 갱신 |
 | `static/` | 미니앱 화면과 클라이언트 코드 |
@@ -89,3 +91,9 @@ python3 -m unittest discover -v
 
 `config.json`, `state.json`, 세션 작업 폴더 및 비밀키는 Git에서 제외합니다.
 기존 실행 환경의 토큰과 대화 상태는 저장소에 포함하지 않습니다.
+
+설정의 **계정 저장**은 현재 계정 정보를 확인·갱신하고 프로필을 서버에 저장합니다.
+로그인 자격 증명은 Codex의 기존 자격 증명 저장소에서 관리하며, 미니앱이나 Git으로 전송하지 않습니다.
+**다시 로그인**을 누르면 ChatGPT 로그인 페이지와 일회용 코드가 표시됩니다.
+로그인을 마치거나 취소할 때까지 새 작업 접수를 멈추며, 실행 중이거나 대기 중인 작업이 있으면 로그인 시작을 제한합니다.
+인증 흐름은 [공식 Codex App Server 문서](https://learn.chatgpt.com/docs/app-server#authentication)를 따릅니다.

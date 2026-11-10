@@ -59,10 +59,10 @@ function el(tag, text, className) { const node = document.createElement(tag); if
 function button(text, handler, className = "") { const node = el("button", text, className); node.type = "button"; node.onclick = () => Promise.resolve().then(handler).catch(e => error(e.message)); return node; }
 async function api(path, data = {}, post = false) {
   if (!auth) throw new Error("텔레그램의 Cloudex 봇에서 미니앱을 열어주세요.");
-  const global = ["/api/status", "/api/events", "/api/models"].includes(path);
+  const global = ["/api/status", "/api/events", "/api/models", "/api/account", "/api/account/save", "/api/account/login", "/api/account/cancel"].includes(path);
   const values = { ...(global ? {} : {session: selected || state?.selected || "main"}), ...data };
   const controller = new AbortController();
-  const slow = ["/api/history", "/api/models", "/api/command", "/api/upload", "/api/download"].includes(path);
+  const slow = path.startsWith("/api/account") || ["/api/history", "/api/models", "/api/command", "/api/upload", "/api/download"].includes(path);
   const timeout = setTimeout(() => controller.abort(), slow ? 100000 : 30000);
   let response;
   try {
@@ -284,6 +284,50 @@ function showToast(text, abovePrompt = false) {
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 3200);
 }
 let settingsSaving = false;
+let accountState = null, accountLoading = false, accountAction = false, accountError = "";
+function renderAccount() {
+  const account = accountState?.account, login = accountState?.login;
+  const pending = ["starting", "pending"].includes(login?.status);
+  $("account-name").textContent = account?.email || (account?.type === "apiKey" ? "API 키 계정" : account ? "연결된 계정" : "로그인된 계정 없음");
+  $("account-plan").textContent = [account?.planType, account?.workspaceName].filter(Boolean).join(" · ");
+  const saved = accountState?.savedProfile;
+  const sameAccount = account && saved && ["type", "email", "workspaceName"].every(key => account[key] === saved[key]);
+  $("account-status").textContent = accountError || login?.message || (pending ? "외부 브라우저에서 로그인한 뒤 아래 코드를 입력하세요." : sameAccount ? "계정 저장됨 · " + new Date(saved.savedAt * 1000).toLocaleString() : account ? "로그인 정보는 이 서버에 자동 저장됩니다." : "ChatGPT 계정으로 로그인해주세요.");
+  $("account-status").classList.toggle("account-error", !!accountError || login?.status === "failed");
+  $("account-save").disabled = accountAction || accountLoading || !account || pending;
+  $("account-login").disabled = accountAction || accountLoading || !accountState?.canLogin;
+  $("account-login").textContent = account ? "다시 로그인" : "ChatGPT 로그인";
+  $("account-refresh").disabled = accountAction || accountLoading;
+  $("account-login-pending").hidden = !pending;
+  $("account-cancel").disabled = accountAction || login?.status !== "pending";
+  $("account-code").textContent = login?.userCode || "준비 중…";
+  const link = $("account-login-link");
+  link.hidden = !login?.verificationUrl;
+  if (login?.verificationUrl) link.href = login.verificationUrl;
+  else link.removeAttribute("href");
+  $("account-busy").hidden = !accountState || accountState.canLogin || pending;
+}
+async function loadAccount() {
+  if (accountLoading || accountAction) return;
+  accountLoading = true;
+  $("account-refresh").disabled = true;
+  try {
+    accountState = await api("/api/account");
+    accountError = "";
+  } catch (e) { accountError = e.message; }
+  finally { accountLoading = false; renderAccount(); }
+}
+async function accountRequest(action) {
+  if (accountAction || accountLoading) return;
+  accountAction = true; accountError = ""; renderAccount();
+  try {
+    const result = await api("/api/account/" + action, {}, true);
+    accountState = {...accountState, ...result};
+    if (action === "save") showToast("계정을 저장했어요");
+  } catch (e) { accountError = e.message; }
+  finally { accountAction = false; renderAccount(); }
+  if (!accountError) await loadAccount();
+}
 async function saveSettings() {
   if (settingsSaving) return;
   const sid = selected;
@@ -345,7 +389,10 @@ function changeTab(tab) {
   hideSidebar();
   $("composer").hidden = tab !== "chat";
   if (tab === "files") loadFiles().catch(e => error(e.message));
-  if (tab === "settings") loadModels().catch(e => error(e.message));
+  if (tab === "settings") {
+    loadModels().catch(e => error(e.message));
+    loadAccount();
+  }
 }
 function hideSidebar() {
   document.body.classList.remove("sidebar-open");
@@ -586,6 +633,10 @@ function log(sid, line) {
   if (sid === selected) { $("console-output").textContent = logs.get(sid); if (currentTab === "console") $("console").scrollTop = $("console").scrollHeight; }
 }
 function nativeEvent(event) {
+  if (event.method === "cloudex/accountChanged") {
+    if (currentTab === "settings" || accountState?.login?.status === "pending") loadAccount();
+    return;
+  }
   const sid = event.cloudex_session || selected, params = event.params || {};
   if (event.method === "cloudex/sessionDeleted") {
     forgetSession(params.session || sid);
@@ -710,6 +761,13 @@ $("older-history").onclick = () => loadHistory(true).catch(e => error(e.message)
 $("model-select").onchange = () => { settingsDirty = true; renderEfforts(""); };
 $("effort-select").onchange = $("policy-select").onchange = () => { settingsDirty = true; };
 $("save-settings").onclick = saveSettings;
+$("account-save").onclick = () => accountRequest("save");
+$("account-login").onclick = () => accountRequest("login");
+$("account-cancel").onclick = () => accountRequest("cancel");
+$("account-refresh").onclick = loadAccount;
+$("account-login-link").onclick = event => {
+  if (telegram?.openLink) { event.preventDefault(); telegram.openLink(event.currentTarget.href); }
+};
 $("exit-settings").onclick = () => {
   if (settingsSaving) return;
   settingsDirty = false;
@@ -798,6 +856,7 @@ async function init() {
     const firstConnection = !state;
     try {
       await refresh();
+      if (currentTab === "settings" || accountState?.login?.status === "pending") await loadAccount();
       if (connectionFailed) { error(""); connectionFailed = false; }
       if (firstConnection) loadHistory().catch(e => error(e.message));
     } catch (e) {

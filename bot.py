@@ -16,6 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
+from accounts import Accounts
+
 BASE = Path(__file__).resolve().parent
 MAX_DOWNLOAD = 20 * 1024 * 1024
 MAX_UPLOAD = 50 * 1024 * 1024
@@ -358,6 +360,7 @@ class Bot:
         self.started = False
         self.telegram = Telegram(config["bot_token"])
         self.codex = Codex(self.event)
+        self.accounts = Accounts(self)
         self.events = asyncio.Queue()
         self.session_events = {}
         self.event_tasks = {}
@@ -531,6 +534,12 @@ class Bot:
     async def event(self, event):
         # Never block JSON-RPC response reading on Telegram's network latency.
         method, params = event["method"], event.get("params", {})
+        if method.startswith("account/") and "id" not in event:
+            self.accounts.notification(event)
+            self.publish({"method": "cloudex/accountChanged", "params": {}})
+            return
+        if method == "cloudex/disconnected":
+            self.accounts.notification(event)
         sid = self.event_sid(event)
         thread = params.get("threadId") or params.get("conversationId") or (params.get("thread") or {}).get("id")
         if thread in self.deleted_threads or sid not in self.runtimes:
@@ -741,6 +750,8 @@ class Bot:
                 self.queue.task_done()
 
     async def enqueue(self, text):
+        if self.accounts.pending:
+            raise ValueError("계정 로그인을 완료하거나 취소한 뒤 작업을 보내주세요.")
         if self.runtime.deleting:
             raise ValueError("삭제 중인 세션입니다.")
         was_idle = not self.runtime.active and not self.queue._unfinished_tasks
@@ -758,6 +769,8 @@ class Bot:
                                   session_id=self.current_sid))
 
     async def submit_message(self, text, mode="queue", expected_turn_id=None):
+        if self.accounts.pending:
+            raise ValueError("계정 로그인을 완료하거나 취소한 뒤 작업을 보내주세요.")
         if self.runtime.deleting:
             raise ValueError("삭제 중인 세션입니다.")
         if mode not in ("queue", "steer"):
