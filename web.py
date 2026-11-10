@@ -49,6 +49,8 @@ async def dispatch(bot, path, data):
     # Global reads must work even when a WebView remembers a deleted session.
     sid = (bot.state["selected_session"] if path in ("/api/status", "/api/events", "/api/models")
            else data.get("session") or bot.state["selected_session"])
+    if path == "/api/models" and data.get("session") in bot.runtimes:
+        sid = data["session"]
     if sid not in bot.runtimes:
         raise ValueError("세션을 찾을 수 없습니다.")
     if path not in ("/api/status", "/api/events", "/api/models") and bot.runtimes[sid].deleting:
@@ -67,6 +69,7 @@ async def dispatch(bot, path, data):
                 "sessions": [{"id": key, "name": rt.data["name"], "archived": bool(rt.data.get("archived")),
                     "active": bool(rt.active or rt.queue._unfinished_tasks > rt.queue.qsize()), "queued": rt.queue.qsize(),
                     "model": rt.data.get("model") or rt.effective.get("model"), "effort": rt.data.get("effort"),
+                    "serviceTier": rt.data.get("serviceTier") or rt.effective.get("serviceTier"),
                     "policy": rt.data.get("approvalPolicy") or rt.effective.get("approvalPolicy"),
                     "sandbox": rt.data.get("sandbox"),
                     "deleting": rt.deleting, "transferring": bool(rt.transfers),
@@ -111,8 +114,7 @@ async def dispatch(bot, path, data):
                 delivery = await bot.submit_message(text, mode, data.get("expectedTurnId"))
             return {"ok": True, "selected": bot.state["selected_session"], **delivery}
         if path == "/api/models":
-            await bot.codex.start()
-            return await bot.codex.call("model/list", {"limit": 100, "cursor": data.get("cursor")})
+            return await bot.model_options(data.get("cursor"))
         if path == "/api/decision":
             await bot.decide(data.get("key", ""), data.get("decision", ""))
             return {"ok": True}
@@ -128,9 +130,21 @@ async def dispatch(bot, path, data):
                     changes.update(policy_changes(bot.session_state, value))
                 else:
                     changes[key] = value
+            if "fastMode" in data:
+                if type(data["fastMode"]) is not bool:
+                    raise ValueError("Fast 모드는 ON 또는 OFF로 선택해주세요.")
+                changes["serviceTier"] = await bot.fast_tier_for_model(changes.get("model")) if data["fastMode"] else "default"
+            elif "model" in changes and bot.session_state.get("serviceTier") in ("fast", "priority"):
+                changes["serviceTier"] = await bot.fast_tier_for_model(changes["model"])
+            previous = dict(bot.session_state)
             bot.session_state.update(changes)
-            bot.persist()
-            return {"ok": True}
+            try:
+                bot.persist()
+            except Exception:
+                bot.session_state.clear()
+                bot.session_state.update(previous)
+                raise
+            return {"ok": True, **({"serviceTier": changes["serviceTier"]} if "serviceTier" in changes else {})}
         if path == "/api/history":
             thread = bot.session_state.get("thread_id")
             if not thread:

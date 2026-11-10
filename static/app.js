@@ -7,6 +7,8 @@ const auth = telegram?.initData || "";
 let selected = null, state = null, cursor = 0, server = "", models = [], historyCursor = null;
 let showArchived = false, approvalSignature = "", currentTab = "chat", stopped = false;
 let settingsDirty = false;
+let fastSelection = null;
+const modelDefaults = new Map();
 const transcriptNodes = new Map(), logs = new Map(), messageTexts = new Map();
 const drafts = new Map(), sending = new Set(), uploading = new Set(), deliveryModes = new Map();
 const deletingSessions = new Set(), deletedSessions = new Set();
@@ -287,6 +289,33 @@ function showToast(text, abovePrompt = false) {
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 3200);
 }
 let settingsSaving = false;
+function selectedSpeedModel() {
+  const id = $("model-select").value || getSession()?.model || modelDefaults.get(selected)?.model;
+  return models.find(model => (model.model || model.id) === id);
+}
+function fastSupported() {
+  const model = selectedSpeedModel();
+  if (!model) return false;
+  const tiers = (model.serviceTiers || []).map(tier => tier.id);
+  return tiers.some(tier => ["fast", "priority"].includes(tier)) || (!tiers.length && model.additionalSpeedTiers?.includes("fast"));
+}
+function fastEnabled() {
+  if (fastSelection !== null) return fastSelection;
+  const tier = getSession()?.serviceTier ?? modelDefaults.get(selected)?.tier ?? selectedSpeedModel()?.defaultServiceTier;
+  return ["fast", "priority"].includes(tier);
+}
+function renderFast() {
+  const supported = fastSupported(), enabled = fastEnabled();
+  $("fast-on").setAttribute("aria-pressed", String(enabled));
+  $("fast-off").setAttribute("aria-pressed", String(!enabled));
+  $("fast-on").disabled = settingsSaving || !supported;
+  $("fast-off").disabled = settingsSaving;
+  $("fast-hint").textContent = supported ? "응답 속도를 높이며 사용량이 더 빠르게 소모됩니다." : selectedSpeedModel() ? "선택한 모델은 Fast 모드를 지원하지 않습니다." : modelDefaults.has(selected) ? "현재 모델의 Fast 지원 여부를 확인할 수 없습니다." : "모델 정보를 불러오는 중입니다.";
+}
+function chooseFast(enabled) {
+  if (settingsSaving || (enabled && !fastSupported())) return;
+  fastSelection = enabled; settingsDirty = true; renderFast();
+}
 let accountState = null, accountLoading = false, accountAction = false, accountError = "";
 const ACCOUNT_REFRESH_MS = 5 * 60 * 1000;
 let accountLastAttempt = null;
@@ -393,7 +422,8 @@ async function accountRequest(action) {
 async function saveSettings() {
   if (settingsSaving) return;
   const sid = selected;
-  const values = {model: $("model-select").value, effort: $("effort-select").value, approvalPolicy: $("policy-select").value};
+  const values = {model: $("model-select").value, effort: $("effort-select").value, approvalPolicy: $("policy-select").value,
+    ...(fastSelection === null ? {} : {fastMode: fastSelection})};
   settingsSaving = true;
   clearTimeout(toastTimer);
   $("toast").hidden = true;
@@ -401,16 +431,17 @@ async function saveSettings() {
   $("exit-settings").disabled = true;
   $("settings-back").disabled = true;
   $("save-settings").textContent = "저장 중…";
-  const controls = ["model-select", "effort-select", "policy-select"].map($);
+  const controls = ["model-select", "effort-select", "policy-select", "fast-on", "fast-off"].map($);
   const disabled = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
   syncCustomSelects();
   try {
-    await api("/api/settings", {...values, session: sid}, true);
+    const result = await api("/api/settings", {...values, session: sid}, true);
     const session = state?.sessions.find(entry => entry.id === sid);
     if (session) {
       if (values.model) session.model = values.model;
       if (values.effort) session.effort = values.effort;
+      if (Object.hasOwn(result, "serviceTier")) session.serviceTier = result.serviceTier;
       if (values.approvalPolicy === "full-access") {
         session.policy = "never"; session.sandbox = "danger-full-access";
       } else if (values.approvalPolicy) {
@@ -436,6 +467,7 @@ async function saveSettings() {
     $("save-settings").textContent = "설정 저장";
     controls.forEach((control, index) => { control.disabled = disabled[index]; });
     syncCustomSelects();
+    renderFast();
   }
 }
 
@@ -507,6 +539,7 @@ let settingsReturnTab = "chat", settingsOpener = null;
 function openSettings() {
   if ($("settings").open) return;
   settingsReturnTab = currentTab;
+  fastSelection = null;
   settingsOpener = document.activeElement;
   currentTab = "settings";
   CustomSelect.active?.close();
@@ -521,6 +554,7 @@ function restoreSettingsView() {
   CustomSelect.active?.close();
   currentTab = settingsReturnTab;
   settingsDirty = false;
+  fastSelection = null;
   render(); error("");
   document.querySelector('[data-tab="settings"]').setAttribute("aria-expanded", "false");
   const target = settingsOpener?.isConnected && !settingsOpener.closest("#sidebar") ? settingsOpener : document.querySelector(`[data-tab="${currentTab}"]`);
@@ -570,6 +604,7 @@ async function selectSession(sid, notify = true) {
   restoreDraft(sid);
   settingsDirty = false;
   rememberSession(sid);
+  fastSelection = null;
   transcriptNodes.clear(); messageTexts.clear(); $("transcript").replaceChildren(); $("empty").hidden = false;
   approvalSignature = ""; historyCursor = null;
   hideSidebar(); render();
@@ -578,6 +613,7 @@ async function selectSession(sid, notify = true) {
   });
   await Promise.all([
     loadHistory().catch(e => { if (sequence === selectionSequence) error(e.message); }),
+    currentTab === "settings" ? loadModels().catch(e => error(e.message)) : Promise.resolve(),
     currentTab === "files" ? loadFiles().catch(e => { if (sequence === selectionSequence) error(e.message); }) : Promise.resolve()
   ]);
 }
@@ -706,6 +742,7 @@ function render() {
     $("policy-select").value = fullAccess ? "full-access" : typeof session.policy === "string" ? session.policy : "";
   }
   syncCustomSelects();
+  renderFast();
   fitPrompt();
 }
 function inlineMarkdown(node, text) {
@@ -805,6 +842,10 @@ function log(sid, line) {
 function nativeEvent(event) {
   const params = event.params || {};
   if (event.method === "cloudex/accountChanged") {
+    if (params.authChanged) {
+      models = []; modelDefaults.clear();
+      if (currentTab === "settings") loadModels().catch(e => error(e.message));
+    }
     if (params.usage && accountState) { accountState.usage = params.usage; renderAccount(); }
     if (params.authChanged && (currentTab === "settings" || accountState?.login?.status === "pending")) loadAccount(false, true);
     return;
@@ -868,10 +909,21 @@ function renderApprovals(approvals) {
   if (!approvals.length) container.append(el("p", "대기 중인 요청이 없습니다.", "hint"));
 }
 async function loadModels() {
-  if (!models.length) {
-    let next = null;
-    do { const response = await api("/api/models", next ? { cursor: next } : {}); models.push(...(response.data || [])); next = response.nextCursor; } while (next);
-    for (const model of models) { const option = el("option", model.displayName || model.model || model.id); option.value = model.model || model.id; $("model-select").append(option); }
+  const sid = selected;
+  if (!models.length || !modelDefaults.has(sid)) {
+    let response = await api("/api/models", {session: sid});
+    modelDefaults.set(sid, {model: response.defaultModel, tier: response.defaultServiceTier});
+    if (!models.length) {
+      const fetched = [...(response.data || [])];
+      while (response.nextCursor) {
+        response = await api("/api/models", {session: sid, cursor: response.nextCursor});
+        fetched.push(...(response.data || []));
+      }
+      models = fetched;
+      $("model-select").replaceChildren(el("option", "Codex 기본 모델"));
+      $("model-select").firstElementChild.value = "";
+      for (const model of models) { const option = el("option", model.displayName || model.model || model.id); option.value = model.model || model.id; $("model-select").append(option); }
+    }
   }
   render();
 }
@@ -961,7 +1013,13 @@ $("hide-approvals").onclick = () => setApprovalPanel($("approvals").hidden);
 $("clear-console").onclick = () => { logs.set(selected, ""); render(); };
 $("refresh-files").onclick = () => loadFiles().catch(e => error(e.message));
 $("older-history").onclick = () => loadHistory(true).catch(e => error(e.message));
-$("model-select").onchange = () => { settingsDirty = true; renderEfforts(""); };
+$("model-select").onchange = () => {
+  settingsDirty = true; renderEfforts("");
+  if (fastEnabled() && !fastSupported()) fastSelection = false;
+  renderFast();
+};
+$("fast-on").onclick = () => chooseFast(true);
+$("fast-off").onclick = () => chooseFast(false);
 $("effort-select").onchange = $("policy-select").onchange = () => { settingsDirty = true; };
 $("save-settings").onclick = saveSettings;
 $("queue-status").onclick = openQueue;

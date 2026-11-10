@@ -187,6 +187,13 @@ pre { font-family: "SFMono-Regular", Consolas, monospace; white-space: pre-wrap;
 #settings label { display: block; font-size: 12px; margin: 24px 0 9px; color: #bbb; }
 select { width: 100%; padding: 12px; background: #2b2b2b; color: #ddd; border: 1px solid #ffffff1a; border-radius: 8px; font-size: 12px; }
 .settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+.fast-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.fast-setting > div:first-child { flex: 1; min-width: 0; }
+.fast-setting h3 { margin: 0; font-size: 13px; color: #ddd; }
+.fast-setting .hint { margin: 6px 0 0; }
+.fast-toggle { display: flex; flex-shrink: 0; gap: 3px; padding: 3px; border-radius: 9px; background: #171717; }
+.fast-toggle button { min-width: 44px; min-height: 44px; padding: 8px; color: #999; font-size: 12px; }
+.fast-toggle button[aria-pressed="true"] { color: #222; background: #e5e5e5; }
 .settings-actions .subtle { padding: 9px 14px; }
 #effective-settings-panel { margin-top: 24px; }
 #effective-settings-panel summary { cursor: pointer; padding: 10px 0; color: #bbb; font-size: 13px; font-weight: 600; }

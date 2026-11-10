@@ -63,6 +63,16 @@ def policy_changes(data, policy):
     return changes
 
 
+def fast_service_tier(model):
+    tiers = [tier.get("id") for tier in model.get("serviceTiers", []) if isinstance(tier, dict)]
+    for tier in tiers:
+        if tier in ("fast", "priority"):
+            return tier
+    if not tiers and "fast" in model.get("additionalSpeedTiers", []):
+        return "priority"
+    return None
+
+
 def sandbox_policy(mode):
     return {"read-only": {"type": "readOnly"},
             "workspace-write": {"type": "workspaceWrite"},
@@ -369,6 +379,7 @@ class Bot:
         self.codex = Codex(self.event)
         self.accounts = Accounts(self)
         self.queued = QueuedRequests(self)
+        self.model_defaults = {}
         self.events = asyncio.Queue()
         self.session_events = {}
         self.event_tasks = {}
@@ -689,13 +700,44 @@ class Bot:
         LOG.info("approval method=%s request=%s decision=%s", event["method"], key, decision)
         await self.tell("Codex에 전달했습니다: " + decision, session_id=self.event_sid(event))
 
+    async def model_options(self, cursor=None):
+        cwd = str(self.root)
+        await self.codex.start()
+        if not cursor:
+            response = await self.codex.call("config/read", {"cwd": cwd, "includeLayers": False})
+            config = response.get("config") or {}
+            self.model_defaults[self.current_sid] = {"defaultModel": config.get("model"),
+                                                     "defaultServiceTier": config.get("service_tier")}
+        response = await self.codex.call("model/list", {"limit": 100, "cursor": cursor})
+        defaults = dict(self.model_defaults.get(self.current_sid, {}))
+        if not defaults.get("defaultModel"):
+            default = next((model for model in response.get("data", []) if model.get("isDefault")), {})
+            defaults["defaultModel"] = default.get("model") or default.get("id")
+        return {**response, **defaults}
+
+    async def fast_tier_for_model(self, model=None):
+        cursor = None
+        while True:
+            response = await self.model_options(cursor)
+            model = model or self.session_state.get("model") or self.effective.get("model") or response.get("defaultModel")
+            entry = next((entry for entry in response.get("data", []) if model and model in (entry.get("model"), entry.get("id"))), None)
+            if entry is not None:
+                tier = fast_service_tier(entry)
+                if tier:
+                    return tier
+                break
+            cursor = response.get("nextCursor")
+            if not cursor:
+                break
+        raise ValueError("선택한 모델은 Fast 모드를 지원하지 않습니다. OFF를 선택해주세요.")
+
     async def session(self):
         await self.codex.start()
         if self.session_ready:
             return
         # Let Codex resolve its own configured defaults and managed requirements.
         args = {"cwd": str(self.root)}
-        for name in ("approvalPolicy", "model", "sandbox"):
+        for name in ("approvalPolicy", "model", "sandbox", "serviceTier"):
             if self.session_state.get(name):
                 args[name] = self.session_state[name]
         if self.session_state.get("thread_id"):
@@ -729,7 +771,7 @@ class Bot:
                 self.background(self.tell("작업을 시작합니다.", session_id=self.current_sid))
                 args = {"threadId": self.session_state["thread_id"],
                         "input": [{"type": "text", "text": text, "text_elements": []}]}
-                for name in ("approvalPolicy", "model"):
+                for name in ("approvalPolicy", "model", "serviceTier"):
                     if self.session_state.get(name):
                         args[name] = self.session_state[name]
                 if self.session_state.get("effort"):
@@ -740,7 +782,7 @@ class Bot:
                 result = await self.codex.call("turn/start", args)
                 if sandbox:
                     self.effective["sandbox"] = sandbox
-                for key in ("model", "approvalPolicy"):
+                for key in ("model", "approvalPolicy", "serviceTier"):
                     if key in args:
                         self.effective[key] = args[key]
                 if "effort" in args:
