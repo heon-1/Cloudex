@@ -97,9 +97,9 @@ h2 { font-size: 26px; font-weight: 500; letter-spacing: -1px; margin: 0 0 16px; 
 #attachment-note, #prompt-container, #prompt-form, .composer-footer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
 #prompt-container { position: relative; }
 #session-status { width: 100%; max-width: 760px; margin: 0 auto; padding: 4px 0 12px; color: #aaa; font-size: 12px; }
-.activity-bubble { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; background: #ffffff05; border: 1px solid var(--line); border-radius: 12px; max-width: 100%; overflow-wrap: anywhere; }
+.activity-bubble { display: inline-flex; align-items: center; gap: 8px; padding: 4px 0; max-width: 100%; overflow-wrap: anywhere; }
 body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 3px #80b99510; }
-#queue-status { position: absolute; bottom: calc(100% + 8px); left: 8px; z-index: 3; padding: 6px 12px; min-height: 28px; font-size: 11px; color: #ddd; background: #303030; border: 1px solid #ffffff24; border-radius: 99px; box-shadow: 0 4px 14px #0003; }
+#queue-status { position: absolute; bottom: calc(100% + 8px); right: 8px; z-index: 3; padding: 6px 12px; min-height: 28px; font-size: 11px; color: #ddd; background: #303030; border: 1px solid #ffffff24; border-radius: 99px; box-shadow: 0 4px 14px #0003; }
 #queue-status:hover { background: #3b3b3b; }
 body.has-queue #chat { padding-bottom: 44px; }
 #prompt-container.has-queue-trigger .toast.above-prompt { bottom: calc(100% + 48px); }
