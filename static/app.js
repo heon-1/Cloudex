@@ -639,11 +639,12 @@ function render() {
   $("session-status").hidden = !session.active;
   $("session-activity-text").textContent = session.name + " · 작업 실행 중";
   $("empty").hidden = !!session.active || $("transcript").childElementCount > 0;
-  $("queue-status").textContent = session.queued ? `${session.queued}개 대기` : "";
-  $("queue-status").hidden = !session.queued;
-  $("queue-status").setAttribute("aria-label", `대기 요청 ${session.queued}개 보기`);
-  $("prompt-container").classList.toggle("has-queued-requests", session.queued > 0);
-  document.body.classList.toggle("has-queue", session.queued > 0);
+  const queued = Math.max(0, Number(session.queued) || 0), showQueue = queued > 0 || !session.active;
+  $("queue-status").textContent = queued ? `${queued}개 대기` : "대기열 보기";
+  $("queue-status").hidden = !showQueue;
+  $("queue-status").setAttribute("aria-label", queued ? `대기 요청 ${queued}개 보기` : "대기열 보기");
+  $("prompt-container").classList.toggle("has-queue-trigger", showQueue);
+  document.body.classList.toggle("has-queue", showQueue);
   const model = models.find(m => (m.model || m.id) === session.model);
   $("composer-model").textContent = model?.displayName || session.model || "Codex 기본 모델";
   const effort = session.effort || session.effective?.reasoningEffort;

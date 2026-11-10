@@ -102,7 +102,7 @@ body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 
 #queue-status { position: absolute; bottom: calc(100% + 8px); left: 8px; z-index: 3; padding: 6px 12px; min-height: 28px; font-size: 11px; color: #ddd; background: #303030; border: 1px solid #ffffff24; border-radius: 99px; box-shadow: 0 4px 14px #0003; }
 #queue-status:hover { background: #3b3b3b; }
 body.has-queue #chat { padding-bottom: 44px; }
-#prompt-container.has-queued-requests .toast.above-prompt { bottom: calc(100% + 48px); }
+#prompt-container.has-queue-trigger .toast.above-prompt { bottom: calc(100% + 48px); }
 #queue-modal { position: fixed; inset: 0; margin: auto; padding: 0; width: min(640px, calc(100% - 24px)); max-width: none; max-height: min(80dvh, 720px); border: 1px solid #ffffff24; border-radius: 16px; color: #ececec; background: #242424; box-shadow: 0 16px 64px #0008; overflow: hidden; }
 #queue-modal[open] { display: flex; flex-direction: column; }
 #queue-modal::backdrop { background: #0009; }
