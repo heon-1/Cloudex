@@ -99,10 +99,17 @@ h2 { font-size: 26px; font-weight: 500; letter-spacing: -1px; margin: 0 0 16px; 
 #session-status { width: 100%; max-width: 760px; margin: 0 auto; padding: 4px 0 12px; color: #aaa; font-size: 12px; }
 .activity-bubble { display: inline-flex; align-items: center; gap: 8px; padding: 4px 0; max-width: 100%; overflow-wrap: anywhere; }
 body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 3px #80b99510; }
-#queue-status { position: absolute; bottom: calc(100% + 8px); right: 8px; z-index: 3; padding: 6px 12px; min-height: 28px; font-size: 11px; color: #ddd; background: #303030; border: 1px solid #ffffff24; border-radius: 99px; box-shadow: 0 4px 14px #0003; }
-#queue-status:hover { background: #3b3b3b; }
-body.has-queue #chat { padding-bottom: 44px; }
-#prompt-container.has-queue-trigger .toast.above-prompt { bottom: calc(100% + 48px); }
+#queue-preview { padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 12px; background: #242424; }
+.queue-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; font-size: 11px; color: #aaa; }
+#queue-status { margin-left: auto; padding: 4px 6px; min-height: 28px; font-size: 11px; color: #ddd; }
+#queue-status:hover { background: #ffffff09; }
+#queue-preview-list { list-style: none; margin: 0; padding: 0; }
+.queue-preview-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.queue-preview-text { flex: 1; min-width: 0; padding: 4px 0; text-align: left; font-size: 12px; line-height: 1.5; color: #ccc; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.queue-preview-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
+.queue-preview-actions button { min-height: 32px; padding: 5px 7px; font-size: 10px; }
+.queue-preview-actions button:last-child { color: #ddd; }
+#queue-preview-message { margin: 6px 0 0; }
 #queue-modal { position: fixed; inset: 0; margin: auto; padding: 0; width: min(640px, calc(100% - 24px)); max-width: none; max-height: min(80dvh, 720px); border: 1px solid #ffffff24; border-radius: 16px; color: #ececec; background: #242424; box-shadow: 0 16px 64px #0008; overflow: hidden; }
 #queue-modal[open] { display: flex; flex-direction: column; }
 #queue-modal::backdrop { background: #0009; }

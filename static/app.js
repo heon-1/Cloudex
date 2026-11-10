@@ -472,11 +472,47 @@ async function saveSettings() {
 }
 
 function getSession() { return state?.sessions.find(s => s.id === selected); }
-let queueSession = null, queueState = null, queueLoading = false, queueAction = null, queueVersion = 0, queueSignature = "";
+let queueSession = null, queueState = null, queueLoading = false, queueAction = null, queueVersion = 0, queueSignature = "", queuePreviewSignature = "", queueReadToken = 0;
+function bindQueueSession() {
+  if (queueSession === selected) return;
+  queueSession = selected; queueState = null; queueSignature = queuePreviewSignature = "";
+  queueVersion++; queueReadToken++;
+  $("queue-preview-message").hidden = true;
+}
+function renderQueuePreview() {
+  const chat = $("chat"), stickToBottom = chat.scrollHeight - chat.clientHeight - chat.scrollTop <= 48;
+  const wasHidden = $("queue-preview").hidden;
+  const queued = Math.max(0, Number(getSession()?.queued) || 0);
+  const items = queueState?.items || [], count = queueState ? items.length : queued;
+  $("queue-preview").hidden = !queued || (!!queueState && !items.length);
+  $("queue-summary").textContent = `${count}개 대기`;
+  $("queue-status").hidden = count <= 3;
+  $("queue-status").textContent = `더 보기 (+${Math.max(0, count - 3)})`;
+  $("queue-status").setAttribute("aria-label", `대기 요청 ${count}개 전체 보기`);
+  const signature = JSON.stringify([selected, items.slice(0, 3), queueAction?.id]);
+  if (signature === queuePreviewSignature) {
+    if (stickToBottom && wasHidden !== $("queue-preview").hidden) chat.scrollTop = chat.scrollHeight;
+    return;
+  }
+  queuePreviewSignature = signature;
+  const list = $("queue-preview-list"); list.replaceChildren();
+  for (const [index, item] of items.slice(0, 3).entries()) {
+    const row = el("li", null, "queue-preview-item"); row.dataset.id = item.id;
+    const text = button(item.text, openQueue, "queue-preview-text");
+    text.setAttribute("aria-label", `${index + 1}번째 대기 요청 전체 보기: ${item.text.slice(0, 120)}`);
+    const actions = el("div", null, "queue-preview-actions");
+    const remove = button("삭제", () => editQueue("delete", item.id), "queue-remove");
+    const apply = button(queueAction?.id === item.id ? "처리 중…" : "바로 적용", () => editQueue("apply", item.id));
+    remove.disabled = apply.disabled = !!queueAction;
+    actions.append(remove, apply); row.append(text, actions); list.append(row);
+  }
+  if (stickToBottom) chat.scrollTop = chat.scrollHeight;
+}
 function renderQueue() {
+  renderQueuePreview();
   const snapshot = queueState;
   $("queue-hint").textContent = snapshot?.activeTurnId ? "바로 적용하면 현재 작업에 전달됩니다." : "바로 적용하면 선택한 요청부터 실행합니다.";
-  const signature = JSON.stringify([snapshot, queueAction?.id]);
+  const signature = JSON.stringify([snapshot?.session, snapshot?.activeTurnId, snapshot?.items, queueAction?.id]);
   if (signature === queueSignature) return;
   queueSignature = signature;
   const list = $("queue-list"); list.replaceChildren();
@@ -492,44 +528,48 @@ function renderQueue() {
   $("queue-empty").hidden = !snapshot || !!snapshot.items.length;
 }
 async function loadQueue() {
-  if (!$("queue-modal").open || queueLoading || queueAction) return;
-  const sid = queueSession, version = queueVersion;
+  if (queueLoading || queueAction || (!$("queue-modal").open && (currentTab !== "chat" || !getSession()?.queued))) return;
+  bindQueueSession();
+  const sid = queueSession, version = queueVersion, token = ++queueReadToken;
   queueLoading = true;
   try {
     const result = await api("/api/queue", {session: sid});
-    if (version !== queueVersion || !$("queue-modal").open) return;
-    queueState = result; $("queue-message").hidden = true; renderQueue();
+    if (version !== queueVersion || token !== queueReadToken || sid !== selected) return;
+    queueState = result; $("queue-message").hidden = true; $("queue-preview-message").hidden = true; renderQueue();
   } catch (e) {
-    if (version === queueVersion) { $("queue-message").textContent = e.message; $("queue-message").hidden = false; }
+    if (version === queueVersion && token === queueReadToken) {
+      for (const id of ["queue-message", "queue-preview-message"]) { $(id).textContent = e.message; $(id).hidden = false; }
+    }
   } finally { queueLoading = false; }
 }
 function openQueue() {
   if (!selected || $("queue-modal").open) return;
-  queueSession = selected; queueState = null; queueSignature = ""; queueVersion++;
-  $("queue-message").textContent = "대기열을 불러오는 중…"; $("queue-message").hidden = false;
+  bindQueueSession();
+  $("queue-message").textContent = "대기열을 불러오는 중…"; $("queue-message").hidden = !!queueState;
   renderQueue(); $("queue-modal").showModal(); $("queue-close").focus({preventScroll: true});
   loadQueue();
 }
 function closeQueue() {
   if (!$("queue-modal").open) return;
-  $("queue-modal").close(); queueVersion++;
-  queueSession = null; queueState = null;
-  if (!$("queue-status").hidden) $("queue-status").focus({preventScroll: true});
-  else $("prompt").focus({preventScroll: true});
+  $("queue-modal").close();
+  if (!$("queue-preview").hidden && !$("queue-status").hidden) $("queue-status").focus({preventScroll: true});
+  else ((!$("queue-preview").hidden && $("queue-preview-list").querySelector("button")) || $("prompt")).focus({preventScroll: true});
 }
 async function editQueue(action, id) {
   if (queueAction || !queueState) return;
   const sid = queueSession, version = queueVersion, turn = queueState.activeTurnId;
   const sessionName = state?.sessions.find(session => session.id === sid)?.name || "대화";
-  queueAction = {id}; renderQueue();
+  queueAction = {id}; queueReadToken++; renderQueue();
   try {
     const result = await api("/api/queue/" + action, {session: sid, id, ...(action === "apply" && turn ? {expectedTurnId: turn} : {})}, true);
-    if (version === queueVersion) { queueState = result; $("queue-message").hidden = true; }
+    if (version === queueVersion) { queueState = result; $("queue-message").hidden = true; $("queue-preview-message").hidden = true; }
     const confirmation = action === "delete" ? "대기 요청을 삭제했어요" : result.delivery === "steer" ? "현재 작업에 바로 적용했어요" : "선택한 요청을 먼저 실행합니다";
     showToast(selected === sid ? confirmation : sessionName + " · " + confirmation);
     await refresh().catch(e => error(e.message));
   } catch (e) {
-    if (version === queueVersion) { $("queue-message").textContent = e.message; $("queue-message").hidden = false; }
+    if (version === queueVersion) {
+      for (const id of ["queue-message", "queue-preview-message"]) { $(id).textContent = e.message; $(id).hidden = false; }
+    }
   } finally {
     queueAction = null;
     if (version === queueVersion) renderQueue();
@@ -683,12 +723,13 @@ function render() {
   $("session-status").hidden = !session.active;
   $("session-activity-text").textContent = session.name + " · 작업 실행 중";
   $("empty").hidden = !!session.active || $("transcript").childElementCount > 0;
-  const queued = Math.max(0, Number(session.queued) || 0), showQueue = queued > 0 || !session.active;
-  $("queue-status").textContent = queued ? `${queued}개 대기` : "대기열 보기";
-  $("queue-status").hidden = !showQueue;
-  $("queue-status").setAttribute("aria-label", queued ? `대기 요청 ${queued}개 보기` : "대기열 보기");
-  $("prompt-container").classList.toggle("has-queue-trigger", showQueue);
-  document.body.classList.toggle("has-queue", showQueue);
+  bindQueueSession();
+  if (!session.queued && !queueAction && queueState?.items.length) {
+    queueState = {session: selected, activeTurnId: session.activeTurnId, items: []};
+    renderQueue();
+  }
+  renderQueuePreview();
+  if (session.queued && (!queueState || queueState.items.length !== session.queued)) loadQueue();
   const model = models.find(m => (m.model || m.id) === session.model);
   $("composer-model").textContent = model?.displayName || session.model || "Codex 기본 모델";
   const effort = session.effort || session.effective?.reasoningEffort;
@@ -1120,7 +1161,7 @@ async function init() {
     const firstConnection = !state;
     try {
       await refresh();
-      if ($("queue-modal").open) loadQueue();
+      if ($("queue-modal").open || getSession()?.queued) loadQueue();
       if (currentTab === "settings" || accountState?.login?.status === "pending") await loadAccount();
       if (connectionFailed) { error(""); connectionFailed = false; }
       if (firstConnection) loadHistory().catch(e => error(e.message));
