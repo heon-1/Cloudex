@@ -67,6 +67,7 @@ h1 { font-size: 13px; font-weight: 500; margin: 0; overflow: hidden; text-overfl
 .view { display: none; padding: 28px max(28px, calc((100% - 800px) / 2)); overflow: auto; flex: 1; min-height: 0; scrollbar-width: thin; }
 .view.active { display: block; }
 #chat.active { display: flex; flex-direction: column; }
+#chat { padding-bottom: 8px; }
 #transcript { width: 100%; max-width: 760px; margin: 0 auto; }
 #empty { margin: auto; padding: 40px 0 68px; width: 100%; max-width: 540px; align-self: center; text-align: center; }
 .empty-mark { width: 46px; height: 46px; stroke-width: 1.55; margin-bottom: 22px; color: #e8e8e8; }
@@ -81,6 +82,7 @@ h2 { font-size: 26px; font-weight: 500; letter-spacing: -1px; margin: 0 0 16px; 
 .suggestions small { display: block; font-size: 10px; color: #7e7e7e; margin-top: 6px; }
 .suggestions button > .chevron { width: 12px; height: 12px; opacity: .5; }
 .message { padding: 16px 0 24px; line-height: 1.85; }
+.message:last-child { padding-bottom: 12px; }
 .message .role { font-size: 11px; font-weight: 600; margin-bottom: 10px; color: #b6b6b6; }
 .message .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
 .message.user { display: flex; flex-direction: column; align-items: flex-end; padding-top: 20px; }
@@ -97,16 +99,16 @@ h2 { font-size: 26px; font-weight: 500; letter-spacing: -1px; margin: 0 0 16px; 
 #composer { padding: 0 28px 14px; flex-shrink: 0; }
 .composer-status, #attachment-note, #prompt-container, #prompt-form, .composer-footer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
 #prompt-container { position: relative; }
-.composer-status { display: flex; align-items: center; gap: 10px; min-height: 26px; font-size: 10px; color: #888; padding: 0 5px 7px; }
+.composer-status { display: flex; align-items: center; gap: 10px; min-height: 20px; font-size: 10px; color: #888; padding: 4px 6px 0; }
 #session-status { display: flex; align-items: center; gap: 6px; }
 body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 3px #80b99510; }
 #queue-status { margin-left: auto; }
-#prompt-form { background: #2b2b2b; border: 1px solid #ffffff17; border-radius: 17px; padding: 14px 12px 10px; box-shadow: 0 4px 18px #0000000c; }
+#prompt-form { background: #2b2b2b; border: 1px solid #ffffff17; border-radius: 17px; padding: 10px 12px 8px; box-shadow: 0 4px 18px #0000000c; }
 #prompt-form:focus-within { border-color: #ffffff2d; }
 textarea { width: 100%; display: block; resize: none; max-height: 180px; min-height: 56px; padding: 0 6px; border: 0; background: transparent; color: #ececec; line-height: 1.65; font-size: 13px; outline: none; }
 textarea::placeholder { color: #999; opacity: 1; }
 textarea:focus-visible { outline-offset: 2px; border-radius: 3px; }
-.compose-actions { display: flex; align-items: center; gap: 3px; margin-top: 8px; }
+.compose-actions { display: flex; align-items: center; gap: 3px; margin-top: 6px; }
 #model-shortcut, #effort-shortcut { display: flex; align-items: center; gap: 4px; padding: 6px; min-width: 0; max-width: 45%; color: #b8b8b8; font-size: 11px; }
 #composer-model, #composer-effort { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #model-shortcut .chevron, #effort-shortcut .chevron { transform: rotate(90deg); color: #777; width: 11px; height: 11px; }
@@ -219,7 +221,7 @@ body.sidebar-collapsed #open-sidebar { display: inline-flex; }
   .suggestions small { font-size: 9px; line-height: 1.6; }
   .suggestions button > .chevron { display: none; }
   #composer { padding: 0 12px max(8px, env(safe-area-inset-bottom)); }
-  #prompt-form { border-radius: 16px; padding: 12px 9px 9px; }
+  #prompt-form { border-radius: 16px; padding: 10px 9px 8px; }
   textarea { font-size: 16px; min-height: 52px; }
   #composer-hint { display: none; }
   #model-shortcut, #effort-shortcut { font-size: 10px; padding: 5px 4px; max-width: 43%; }
