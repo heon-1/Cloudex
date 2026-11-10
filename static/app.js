@@ -50,8 +50,9 @@ function fitPrompt() {
   customSelects.get(mode)?.sync();
 }
 function setApprovalPanel(open) {
-  $("approval-panel").hidden = !open;
-  $("approval-tab").setAttribute("aria-expanded", String(open));
+  $("approvals").hidden = !open;
+  $("hide-approvals").textContent = open ? "접기" : "펼치기";
+  $("hide-approvals").setAttribute("aria-expanded", String(open));
 }
 
 function error(message) {
@@ -613,10 +614,13 @@ function render() {
     if (!entries.length) nav.append(el("p", sessionQuery ? "검색 결과가 없습니다." : showArchived ? "보관된 대화가 없습니다." : "새 대화를 시작하세요.", "session-empty"));
   }
   const approvals = state.approvals.filter(a => a.session === selected);
-  $("approval-tab").classList.toggle("has-approvals", approvals.length > 0);
-  $("approval-count").textContent = approvals.length;
   const signature = selected + ":" + approvals.map(a => a.key).join(",");
-  if (signature !== approvalSignature) { approvalSignature = signature; renderApprovals(approvals); }
+  if (signature !== approvalSignature) {
+    approvalSignature = signature;
+    renderApprovals(approvals);
+    $("approval-panel").hidden = !approvals.length;
+    setApprovalPanel(approvals.length > 0);
+  }
   if (!settingsDirty && document.activeElement?.tagName !== "SELECT") {
     $("model-select").value = session.model || "";
     renderEfforts(session.effort);
@@ -871,8 +875,7 @@ $("delete-session").onclick = () => deleteSession(selected);
 $("archive-session").onclick = async () => { if (confirm("이 세션을 보관할까요? 대화와 파일은 유지됩니다.")) { try { const result = await command(`/archive ${selected}`); await selectSession(result.selected, false); } catch(e) { error(e.message); } } };
 document.querySelectorAll("[data-tab]").forEach(n => n.onclick = () => changeTab(n.dataset.tab));
 $("model-shortcut").onclick = $("effort-shortcut").onclick = $("policy-shortcut").onclick = () => changeTab("settings");
-$("approval-tab").onclick = () => setApprovalPanel($("approval-panel").hidden);
-$("hide-approvals").onclick = () => setApprovalPanel(false);
+$("hide-approvals").onclick = () => setApprovalPanel($("approvals").hidden);
 $("clear-console").onclick = () => { logs.set(selected, ""); render(); };
 $("refresh-files").onclick = () => loadFiles().catch(e => error(e.message));
 $("older-history").onclick = () => loadHistory(true).catch(e => error(e.message));

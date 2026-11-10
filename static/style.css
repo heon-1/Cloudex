@@ -61,9 +61,6 @@ h1 { font-size: 13px; font-weight: 500; margin: 0; overflow: hidden; text-overfl
 .tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 9px; color: #999; font-size: 11px; white-space: nowrap; }
 .tabs button .glyph { width: 14px; height: 14px; }
 .tabs button.selected { background: #ffffff0a; color: #e5e5e5; }
-#approval-count { font-size: 9px; background: #ffffff0a; color: #aaa; padding: 1px 4px; border-radius: 4px; font-variant-numeric: tabular-nums; }
-#approval-tab.has-approvals { color: #e5c58b; }
-#approval-tab.has-approvals #approval-count { background: #e5c58b18; color: #e5c58b; }
 .view { display: none; padding: 28px max(28px, calc((100% - 800px) / 2)); overflow: auto; flex: 1; min-height: 0; scrollbar-width: thin; }
 .view.active { display: block; }
 #chat.active { display: flex; flex-direction: column; }
@@ -211,7 +208,6 @@ body.sidebar-collapsed #open-sidebar { display: inline-flex; }
   .tabs { width: 100%; padding-top: 3px; gap: 8px; }
   .tabs button { min-height: 39px; padding: 8px 10px; font-size: 11px; border-radius: 0; border-bottom: 2px solid transparent; }
   .tabs button.selected { background: transparent; border-color: #aaa; }
-  #approval-tab { margin-left: auto; }
   .view { padding: 20px; }
   #empty { padding: 28px 0 36px; max-width: 400px; }
   .empty-mark { width: 37px; height: 37px; margin-bottom: 18px; }
