@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#212121">
+  <title>Cloudex · Codex workspace</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+    <symbol id="i-codex" viewBox="0 0 32 32"><path d="m11 8-8 8 8 8M21 8l8 8-8 8M18 5l-4 22"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+    <symbol id="i-new" viewBox="0 0 24 24"><path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7M16 3l5 5M10 14l-1 4 4-1L22 8a2 2 0 0 0-5-5Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 8V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="5" rx="1"/><path d="M5 8v12h14V8M10 12h4"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 6 6-6 6M13 18h7"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8ZM14 3v6h5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6ZM9 12l2 2 4-4"/></symbol>
+  </defs></svg>
+  <aside id="sidebar" aria-label="작업 공간">
+    <div class="brand"><svg class="glyph brand-mark" aria-hidden="true"><use href="#i-codex"/></svg><span>Cloudex</span><button id="close-sidebar" class="icon" aria-label="사이드바 접기" title="사이드바 접기"><svg class="glyph" aria-hidden="true"><use href="#i-panel"/></svg></button></div>
+    <button id="new-session" class="nav-action"><svg class="glyph" aria-hidden="true"><use href="#i-new"/></svg><span>새 대화</span></button>
+    <label class="session-search"><svg class="glyph" aria-hidden="true"><use href="#i-search"/></svg><input id="session-search" type="search" placeholder="대화 검색" aria-label="대화 검색" autocomplete="off"></label>
+    <div class="section-label"><span>대화</span><button id="archived-toggle" aria-pressed="false">보관함</button></div>
+    <div class="project-label"><svg class="glyph" aria-hidden="true"><use href="#i-folder"/></svg><span>Cloudex</span><span id="running-sessions" class="local-label" aria-live="polite">로컬</span></div>
+    <nav id="session-list" aria-label="대화 목록"></nav>
+    <div class="sidebar-bottom"><button class="nav-action" data-tab="settings"><svg class="glyph" aria-hidden="true"><use href="#i-settings"/></svg><span>설정</span></button><footer><span class="server-icon">C</span><div><strong>Cloudex<span class="connection-dot dot"></span></strong><span id="connection">연결 확인 중</span></div><span class="version">Codex</span></footer></div>
+  </aside>
+  <button id="scrim" aria-label="대화 목록 닫기" tabindex="-1"></button>
+  <main id="workspace">
+    <div class="workspace-top">
+      <header><button id="open-sidebar" class="icon" aria-label="사이드바 펼치기" title="사이드바 펼치기" aria-expanded="false" aria-controls="sidebar"><svg class="glyph" aria-hidden="true"><use href="#i-panel"/></svg></button><div class="heading"><svg class="glyph heading-icon" aria-hidden="true"><use href="#i-folder"/></svg><span class="workspace-name">Cloudex</span><span class="breadcrumb">/</span><h1 id="session-name">새 대화</h1></div><button id="rename-session" class="icon" aria-label="대화 이름 변경" title="대화 이름 변경"><svg class="glyph" aria-hidden="true"><use href="#i-new"/></svg></button><button id="archive-session" class="icon" aria-label="대화 보관" title="대화 보관"><svg class="glyph" aria-hidden="true"><use href="#i-archive"/></svg></button></header>
+      <nav class="tabs" aria-label="작업 보기"><button data-tab="chat" class="selected" aria-current="page">대화</button><button data-tab="console"><svg class="glyph" aria-hidden="true"><use href="#i-terminal"/></svg><span>실행 로그</span></button><button data-tab="files"><svg class="glyph" aria-hidden="true"><use href="#i-file"/></svg><span>파일</span></button><button id="approval-tab" aria-expanded="false" aria-controls="approval-panel"><svg class="glyph" aria-hidden="true"><use href="#i-shield"/></svg><span>승인</span><span id="approval-count">0</span></button></nav>
+    </div>
+    <div id="error" role="alert" hidden></div>
+    <section id="approval-panel" aria-label="승인 요청" hidden><div class="panel-title">확인이 필요한 요청<button id="hide-approvals" class="subtle">닫기</button></div><div id="approvals"></div></section>
+    <section id="chat" class="view active" aria-label="대화"><button id="older-history" class="subtle" hidden>이전 대화 더 보기</button><div id="transcript" aria-live="polite"></div><div id="empty"><svg class="glyph empty-mark" aria-hidden="true"><use href="#i-codex"/></svg><h2>무엇을 만들어 볼까요?</h2><div class="empty-project"><svg class="glyph" aria-hidden="true"><use href="#i-folder"/></svg>Cloudex<svg class="glyph chevron" aria-hidden="true"><use href="#i-chevron"/></svg><span>로컬 작업 공간</span></div><div class="suggestions"><button data-prompt="작업 폴더의 파일을 살펴봐줘"><svg class="glyph" aria-hidden="true"><use href="#i-folder"/></svg><span>코드 살펴보기<small>프로젝트 구조부터 파악하기</small></span><svg class="glyph chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button><button data-prompt="현재 환경과 사용할 수 있는 도구를 확인해줘"><svg class="glyph" aria-hidden="true"><use href="#i-terminal"/></svg><span>작업 환경 확인<small>사용할 수 있는 도구 알아보기</small></span><svg class="glyph chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button></div></div></section>
+    <section id="console" class="view" aria-label="실행 로그"><div class="panel-title">명령과 도구 실행<button id="clear-console" class="subtle">화면 비우기</button></div><pre id="console-output">실행 로그가 여기에 표시됩니다.</pre></section>
+    <section id="files" class="view" aria-label="파일"><div class="panel-title">현재 대화의 파일<button id="refresh-files" class="subtle">새로고침</button></div><div id="file-list"></div><p class="hint">파일을 첨부하거나 텔레그램으로 주고받을 수 있습니다.</p></section>
+    <section id="settings" class="view" aria-label="설정"><h2>대화 설정</h2><p class="hint">다음 작업부터 적용됩니다. 실행 중인 작업은 기존 설정을 유지합니다.</p><label for="model-select">모델</label><select id="model-select"><option value="">Codex 기본 모델</option></select><label for="effort-select">추론 수준</label><select id="effort-select"><option value="">기본값</option></select><label for="policy-select">승인 정책</label><select id="policy-select"><option value="">기본값</option><option value="full-access">항상 승인 · 전체 액세스</option><option value="on-request">필요할 때 승인 요청</option><option value="untrusted">신뢰하지 않는 작업 승인 요청</option><option value="never">추가 권한 요청 거절</option></select><div class="settings-actions"><button id="save-settings" class="primary" type="button">설정 저장</button><button id="exit-settings" class="subtle" type="button">나가기</button></div><details id="effective-settings-panel"><summary>Codex 적용 상태</summary><pre id="effective-settings">첫 작업을 시작하면 적용 상태가 표시됩니다.</pre></details><button id="retry-job" class="subtle" hidden>중단된 이전 요청 다시 접수</button></section>
+    <div id="composer"><div class="composer-status" role="status"><span id="session-status"><i class="dot"></i> 대기 중</span><span id="queue-status"></span></div><div id="attachment-note" hidden></div><form id="prompt-form"><label for="prompt" class="sr-only">Codex 작업 요청</label><textarea id="prompt" rows="2" placeholder="Codex에 작업을 요청하세요" maxlength="30000"></textarea><div class="compose-actions"><button type="button" id="attach" class="icon" aria-label="파일 첨부" title="파일 첨부"><svg class="glyph" aria-hidden="true"><use href="#i-plus"/></svg></button><button type="button" id="model-shortcut" title="모델 및 추론 수준 설정"><span id="composer-model">Codex 기본 모델</span><svg class="glyph chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button><button type="button" id="effort-shortcut" title="추론 수준 설정"><span id="composer-effort">기본 추론</span><svg class="glyph chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button><div class="send-actions"><button type="button" id="stop-job" class="icon" aria-label="작업 중단" title="작업 중단" hidden><svg class="glyph" aria-hidden="true"><use href="#i-stop"/></svg></button><button type="submit" id="send" class="primary" aria-label="메시지 보내기" title="메시지 보내기"><svg class="glyph" aria-hidden="true"><use href="#i-up"/></svg></button></div></div></form><input type="file" id="file-input" hidden><div class="composer-footer"><button id="policy-shortcut" title="승인 정책 설정"><svg class="glyph" aria-hidden="true"><use href="#i-shield"/></svg><span id="composer-policy">기본 권한</span></button><span id="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span></div></div>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true" hidden><span class="toast-icon" aria-hidden="true">✓</span><span id="toast-message"></span></div>
+</body>
+</html>

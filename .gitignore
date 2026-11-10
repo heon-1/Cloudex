@@ -1,0 +1,22 @@
+# Private configuration and runtime data
+/config.json
+/config.tmp
+/state.json
+/state.tmp
+/workspace/
+/workspaces/
+/.cloudex.lock
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local build, test and editor files
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+venv/
+node_modules/
+.DS_Store
