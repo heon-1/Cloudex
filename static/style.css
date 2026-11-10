@@ -42,7 +42,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .sidebar-bottom { padding-top: 12px; }
 .sidebar-bottom .nav-action.selected { background: #ffffff0c; }
 footer { display: flex; align-items: center; gap: 10px; padding: 15px 10px 4px; margin-top: 8px; border-top: 1px solid var(--line); }
-.server-icon { display: grid; place-items: center; width: 30px; height: 30px; background: #303030; border-radius: 50%; color: #d5d5d5; font-size: 12px; font-weight: 600; }
+.server-icon { display: grid; place-items: center; width: 30px; height: 30px; background: #303030; border-radius: 50%; color: #d5d5d5; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+.footer-account { flex: 1; min-width: 0; }
+#sidebar-account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sidebar-account-plan { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
 footer strong { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; }
 #connection { display: block; font-size: 10px; color: #858585; margin-top: 3px; }
 .version { margin-left: auto; color: #777; font-size: 10px; }

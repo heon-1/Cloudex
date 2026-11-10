@@ -371,6 +371,12 @@ function renderUsage() {
 }
 function renderAccount() {
   const account = accountState?.account, login = accountState?.login;
+  const accountName = account?.email || (account?.type === "apiKey" ? "API 키 계정" : account ? "연결된 계정" : accountState ? "로그인 필요" : accountError ? "계정 확인 실패" : "계정 확인 중");
+  $("sidebar-account-name").textContent = accountName;
+  $("sidebar-account-name").title = [accountName, account?.workspaceName].filter(Boolean).join(" · ");
+  $("sidebar-account-avatar").textContent = account?.email ? Array.from(account.email)[0].toLocaleUpperCase() : "C";
+  $("sidebar-account-plan").textContent = account?.planType ? account.planType.charAt(0).toUpperCase() + account.planType.slice(1) : "";
+  $("sidebar-account-plan").title = account?.planType || "";
   const pending = ["starting", "pending"].includes(login?.status);
   const hasWork = state ? state.sessions.some(session => session.active || session.queued || session.deleting) : !accountState?.canLogin;
   const canLogin = !!accountState && !hasWork && !pending && !queueAction;
@@ -888,7 +894,7 @@ function nativeEvent(event) {
       if (currentTab === "settings") loadModels().catch(e => error(e.message));
     }
     if (params.usage && accountState) { accountState.usage = params.usage; renderAccount(); }
-    if (params.authChanged && (currentTab === "settings" || accountState?.login?.status === "pending")) loadAccount(false, true);
+    if (params.authChanged) loadAccount(false, true);
     return;
   }
   const sid = event.cloudex_session || selected;
@@ -1162,7 +1168,7 @@ async function init() {
     try {
       await refresh();
       if ($("queue-modal").open || getSession()?.queued) loadQueue();
-      if (currentTab === "settings" || accountState?.login?.status === "pending") await loadAccount();
+      loadAccount();
       if (connectionFailed) { error(""); connectionFailed = false; }
       if (firstConnection) loadHistory().catch(e => error(e.message));
     } catch (e) {
