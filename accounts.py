@@ -5,6 +5,7 @@ import math
 import time
 from urllib.parse import urlsplit
 
+USAGE_CACHE_SECONDS = 5 * 60
 
 def usage_buckets(result):
     """Expose only quota windows; never infer token counts or a quota reset."""
@@ -89,7 +90,7 @@ class Accounts:
             self.usage_checked = 0
             return {"buckets": [], "updatedAt": None, "error": "로그인 후 사용량을 확인하세요." if not account else "이 계정은 남은 사용량 정보를 제공하지 않습니다."}
         async with self.usage_lock:
-            if self.usage and not force and time.monotonic() - self.usage_checked < 30:
+            if self.usage and not force and time.monotonic() - self.usage_checked < USAGE_CACHE_SECONDS:
                 return self.usage
             revision = self.usage_revision
             try:

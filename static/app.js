@@ -288,6 +288,8 @@ function showToast(text, abovePrompt = false) {
 }
 let settingsSaving = false;
 let accountState = null, accountLoading = false, accountAction = false, accountError = "";
+const ACCOUNT_REFRESH_MS = 5 * 60 * 1000;
+let accountLastAttempt = null;
 function usageWindowLabel(minutes, fallback) {
   if (!Number.isFinite(minutes) || minutes <= 0) return fallback;
   if (minutes % 1440 === 0) return `${minutes / 1440}일 한도`;
@@ -341,6 +343,8 @@ function renderUsage() {
 function renderAccount() {
   const account = accountState?.account, login = accountState?.login;
   const pending = ["starting", "pending"].includes(login?.status);
+  const hasWork = state ? state.sessions.some(session => session.active || session.queued || session.deleting) : !accountState?.canLogin;
+  const canLogin = !!accountState && !hasWork && !pending && !queueAction;
   $("account-name").textContent = account?.email || (account?.type === "apiKey" ? "API 키 계정" : account ? "연결된 계정" : "로그인된 계정 없음");
   $("account-plan").textContent = [account?.planType, account?.workspaceName].filter(Boolean).join(" · ");
   const saved = accountState?.savedProfile;
@@ -348,7 +352,7 @@ function renderAccount() {
   $("account-status").textContent = accountError || login?.message || (pending ? "외부 브라우저에서 로그인한 뒤 아래 코드를 입력하세요." : sameAccount ? "계정 저장됨 · " + new Date(saved.savedAt * 1000).toLocaleString() : account ? "로그인 정보는 이 서버에 자동 저장됩니다." : "ChatGPT 계정으로 로그인해주세요.");
   $("account-status").classList.toggle("account-error", !!accountError || login?.status === "failed");
   $("account-save").disabled = accountAction || accountLoading || !account || pending;
-  $("account-login").disabled = accountAction || accountLoading || !accountState?.canLogin;
+  $("account-login").disabled = accountAction || accountLoading || !canLogin;
   $("account-login").textContent = account ? "다시 로그인" : "ChatGPT 로그인";
   $("account-refresh").disabled = accountAction || accountLoading;
   $("account-login-pending").hidden = !pending;
@@ -358,11 +362,15 @@ function renderAccount() {
   link.hidden = !login?.verificationUrl;
   if (login?.verificationUrl) link.href = login.verificationUrl;
   else link.removeAttribute("href");
-  $("account-busy").hidden = !accountState || accountState.canLogin || pending;
+  $("account-busy").hidden = !accountState || canLogin || pending;
   renderUsage();
 }
-async function loadAccount(refreshUsage = false) {
+async function loadAccount(refreshUsage = false, force = false) {
   if (accountLoading || accountAction) return;
+  if (!refreshUsage && !force && accountLastAttempt !== null && performance.now() - accountLastAttempt < ACCOUNT_REFRESH_MS) {
+    renderAccount(); return;
+  }
+  accountLastAttempt = performance.now();
   accountLoading = true;
   $("account-refresh").disabled = true;
   try {
@@ -380,7 +388,7 @@ async function accountRequest(action) {
     if (action === "save") showToast("계정을 저장했어요");
   } catch (e) { accountError = e.message; }
   finally { accountAction = false; renderAccount(); }
-  if (!accountError) await loadAccount();
+  if (!accountError) await loadAccount(false, true);
 }
 async function saveSettings() {
   if (settingsSaving) return;
@@ -795,11 +803,13 @@ function log(sid, line) {
   if (sid === selected) { $("console-output").textContent = logs.get(sid); if (currentTab === "console") $("console").scrollTop = $("console").scrollHeight; }
 }
 function nativeEvent(event) {
+  const params = event.params || {};
   if (event.method === "cloudex/accountChanged") {
-    if (currentTab === "settings" || accountState?.login?.status === "pending") loadAccount();
+    if (params.usage && accountState) { accountState.usage = params.usage; renderAccount(); }
+    if (params.authChanged && (currentTab === "settings" || accountState?.login?.status === "pending")) loadAccount(false, true);
     return;
   }
-  const sid = event.cloudex_session || selected, params = event.params || {};
+  const sid = event.cloudex_session || selected;
   if (event.method === "cloudex/sessionDeleted") {
     forgetSession(params.session || sid);
     fitPrompt();

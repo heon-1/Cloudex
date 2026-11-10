@@ -99,3 +99,5 @@ python3 -m unittest discover -v
 **다시 로그인**을 누르면 ChatGPT 로그인 페이지와 일회용 코드가 표시됩니다.
 로그인을 마치거나 취소할 때까지 새 작업 접수를 멈추며, 실행 중이거나 대기 중인 작업이 있으면 로그인 시작을 제한합니다.
 인증 흐름은 [공식 Codex App Server 문서](https://learn.chatgpt.com/docs/app-server#authentication)를 따릅니다.
+
+계정·사용량 자동 조회는 5분 간격입니다. 수동 새로고침과 로그인 완료 확인은 즉시 처리하며, 대화와 대기열 상태 갱신은 계속 유지합니다.

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from accounts import usage_buckets
@@ -172,6 +173,21 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["usage"]["buckets"][0]["primary"]["remainingPercent"], 30)
         self.assertEqual(sum(method == "account/rateLimits/read" for method, _ in self.bot.codex.calls), 2)
 
+    async def test_usage_is_cached_for_five_minutes(self):
+        now = [1000]
+        clock = SimpleNamespace(time=lambda: 1900000000, monotonic=lambda: now[0])
+        with patch("accounts.time", clock):
+            await self.bot.accounts.read()
+            now[0] = 1299
+            await self.bot.accounts.read()
+            self.assertEqual(sum(method == "account/rateLimits/read" for method, _ in self.bot.codex.calls), 1)
+            now[0] = 1300
+            await self.bot.accounts.read()
+            self.assertEqual(sum(method == "account/rateLimits/read" for method, _ in self.bot.codex.calls), 2)
+            now[0] = 1301
+            await self.bot.accounts.read(refresh_usage=True)
+            self.assertEqual(sum(method == "account/rateLimits/read" for method, _ in self.bot.codex.calls), 3)
+
     async def test_sparse_notification_preserves_other_window(self):
         await self.bot.accounts.read()
         await self.bot.event({"method": "account/rateLimits/updated", "params": {"rateLimits": {
@@ -179,6 +195,8 @@ class AccountTests(unittest.IsolatedAsyncioTestCase):
         result = await self.bot.accounts.read()
         self.assertEqual(result["usage"]["buckets"][0]["primary"]["remainingPercent"], 20)
         self.assertEqual(result["usage"]["buckets"][0]["secondary"]["remainingPercent"], 40)
+        self.assertFalse(self.bot.feed[-1]["params"]["authChanged"])
+        self.assertEqual(self.bot.feed[-1]["params"]["usage"]["buckets"][0]["primary"]["remainingPercent"], 20)
 
     async def test_usage_failure_keeps_account_and_marks_previous_snapshot_stale(self):
         previous = await self.bot.accounts.read()

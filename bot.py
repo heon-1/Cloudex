@@ -544,7 +544,9 @@ class Bot:
         method, params = event["method"], event.get("params", {})
         if method.startswith("account/") and "id" not in event:
             self.accounts.notification(event)
-            self.publish({"method": "cloudex/accountChanged", "params": {}})
+            self.publish({"method": "cloudex/accountChanged", "params": {
+                "authChanged": method in ("account/updated", "account/login/completed"),
+                **({"usage": self.accounts.usage} if method == "account/rateLimits/updated" else {})}})
             return
         if method == "cloudex/disconnected":
             self.accounts.notification(event)
