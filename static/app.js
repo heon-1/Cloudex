@@ -445,6 +445,12 @@ function changeTab(tab) {
     loadAccount();
   }
 }
+function showSidebar() {
+  CustomSelect.active?.close();
+  document.body.classList.remove("sidebar-collapsed");
+  if (window.matchMedia("(max-width: 760px)").matches) document.body.classList.add("sidebar-open");
+  $("open-sidebar").setAttribute("aria-expanded", "true");
+}
 function hideSidebar() {
   document.body.classList.remove("sidebar-open");
   $("open-sidebar").setAttribute("aria-expanded", String(!window.matchMedia("(max-width: 760px)").matches && !document.body.classList.contains("sidebar-collapsed")));
@@ -773,11 +779,37 @@ async function loadFiles() {
   }
   if (!result.files?.length) container.append(el("p", "파일을 첨부하거나 Codex에 작업을 요청하세요.", "hint"));
 }
-$("open-sidebar").onclick = () => {
-  if (window.matchMedia("(max-width: 760px)").matches) document.body.classList.add("sidebar-open");
-  else document.body.classList.remove("sidebar-collapsed");
-  $("open-sidebar").setAttribute("aria-expanded", "true");
-};
+$("open-sidebar").onclick = showSidebar;
+let sidebarSwipe = null;
+document.addEventListener("touchstart", event => {
+  sidebarSwipe = null;
+  if (!window.matchMedia("(max-width: 760px)").matches || document.body.classList.contains("sidebar-open") || event.touches.length !== 1) return;
+  const target = event.target;
+  if (!target.closest?.("#workspace") || target.closest('input, textarea, select, button, a, [role="combobox"], [role="listbox"], [role="slider"], [contenteditable]:not([contenteditable="false"])') || window.getSelection()?.toString()) return;
+  for (let node = target; node && node !== document.body; node = node.parentElement) {
+    if (node.scrollWidth > node.clientWidth + 1 && ["auto", "scroll"].includes(getComputedStyle(node).overflowX)) return;
+  }
+  const touch = event.touches[0];
+  sidebarSwipe = {id: touch.identifier, x: touch.clientX, y: touch.clientY, started: performance.now()};
+}, {passive: true});
+document.addEventListener("touchmove", event => {
+  if (!sidebarSwipe) return;
+  const touch = Array.from(event.touches).find(touch => touch.identifier === sidebarSwipe.id);
+  if (!touch || event.touches.length !== 1) { sidebarSwipe = null; return; }
+  const dx = touch.clientX - sidebarSwipe.x, dy = Math.abs(touch.clientY - sidebarSwipe.y);
+  if (dx < -12 || (dy > 12 && dy >= Math.abs(dx)) || performance.now() - sidebarSwipe.started > 800) { sidebarSwipe = null; return; }
+  if (dx > 12 && dx > dy * 1.5 && event.cancelable) event.preventDefault();
+}, {passive: false});
+document.addEventListener("touchend", event => {
+  const swipe = sidebarSwipe;
+  sidebarSwipe = null;
+  if (!swipe || event.touches.length || !window.matchMedia("(max-width: 760px)").matches || window.getSelection()?.toString()) return;
+  const touch = Array.from(event.changedTouches).find(touch => touch.identifier === swipe.id);
+  if (!touch || performance.now() - swipe.started > 800) return;
+  const dx = touch.clientX - swipe.x, dy = Math.abs(touch.clientY - swipe.y);
+  if (dx >= 64 && dx > dy * 1.5) showSidebar();
+}, {passive: true});
+document.addEventListener("touchcancel", () => { sidebarSwipe = null; }, {passive: true});
 $("close-sidebar").onclick = () => {
   if (window.matchMedia("(max-width: 760px)").matches) {
     hideSidebar();
