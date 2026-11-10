@@ -285,6 +285,56 @@ function showToast(text, abovePrompt = false) {
 }
 let settingsSaving = false;
 let accountState = null, accountLoading = false, accountAction = false, accountError = "";
+function usageWindowLabel(minutes, fallback) {
+  if (!Number.isFinite(minutes) || minutes <= 0) return fallback;
+  if (minutes % 1440 === 0) return `${minutes / 1440}일 한도`;
+  if (minutes % 60 === 0) return `${minutes / 60}시간 한도`;
+  return `${minutes}분 한도`;
+}
+function resetDescription(timestamp) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "리셋 시간 제공 안 됨";
+  const date = new Date(timestamp * 1000);
+  if (!Number.isFinite(date.getTime())) return "리셋 시간 제공 안 됨";
+  const absolute = new Intl.DateTimeFormat("ko-KR", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short"}).format(date);
+  const minutes = Math.ceil((date.getTime() - Date.now()) / 60000);
+  let relative = "리셋 확인 중";
+  if (minutes > 0) {
+    const days = Math.floor(minutes / 1440), hours = Math.floor(minutes / 60) % 24;
+    relative = days ? `${days}일 ${hours}시간 뒤` : hours ? `${hours}시간 ${minutes % 60}분 뒤` : `${minutes}분 뒤`;
+  }
+  return `리셋 ${absolute} · ${relative}`;
+}
+function renderUsage() {
+  const usage = accountState?.usage, list = $("account-usage-windows");
+  $("account-usage").hidden = !accountState?.account;
+  list.replaceChildren();
+  for (const bucket of usage?.buckets || []) {
+    const group = el("div", null, "usage-bucket");
+    group.append(el("h5", bucket.name === "codex" ? "Codex" : bucket.name || "Codex"));
+    for (const key of ["primary", "secondary"]) {
+      const window = bucket[key];
+      if (!window) continue;
+      const label = usageWindowLabel(window.windowDurationMins, key === "primary" ? "단기 한도" : "장기 한도");
+      const remaining = window.remainingPercent;
+      const known = Number.isFinite(remaining);
+      const row = el("div", null, "usage-window"), header = el("div", null, "usage-window-heading");
+      header.append(el("span", label), el("strong", known ? `${new Intl.NumberFormat("ko-KR", {maximumFractionDigits: 1}).format(remaining)}% 남음` : "잔량 확인 불가"));
+      row.append(header);
+      if (known) {
+        const progress = el("progress", null, remaining <= 20 ? "usage-low" : "");
+        progress.max = 100; progress.value = Math.max(0, Math.min(100, remaining));
+        progress.setAttribute("aria-label", label + " 남은 사용량");
+        row.append(progress);
+      }
+      const reset = el("time", resetDescription(window.resetsAt), "usage-reset");
+      if (Number.isFinite(window.resetsAt) && window.resetsAt > 0 && window.resetsAt <= 253402300799) reset.dateTime = new Date(window.resetsAt * 1000).toISOString();
+      row.append(reset); group.append(row);
+    }
+    list.append(group);
+  }
+  $("account-usage-note").textContent = usage?.error || (usage?.updatedAt ? "마지막 확인 " + new Date(usage.updatedAt * 1000).toLocaleTimeString("ko-KR") : "사용량 정보를 확인 중입니다.");
+  $("account-usage-note").classList.toggle("account-error", !!usage?.error && !!usage?.buckets?.length);
+}
 function renderAccount() {
   const account = accountState?.account, login = accountState?.login;
   const pending = ["starting", "pending"].includes(login?.status);
@@ -306,13 +356,14 @@ function renderAccount() {
   if (login?.verificationUrl) link.href = login.verificationUrl;
   else link.removeAttribute("href");
   $("account-busy").hidden = !accountState || accountState.canLogin || pending;
+  renderUsage();
 }
-async function loadAccount() {
+async function loadAccount(refreshUsage = false) {
   if (accountLoading || accountAction) return;
   accountLoading = true;
   $("account-refresh").disabled = true;
   try {
-    accountState = await api("/api/account");
+    accountState = await api("/api/account", refreshUsage ? {refreshUsage: "1"} : {});
     accountError = "";
   } catch (e) { accountError = e.message; }
   finally { accountLoading = false; renderAccount(); }
@@ -764,7 +815,7 @@ $("save-settings").onclick = saveSettings;
 $("account-save").onclick = () => accountRequest("save");
 $("account-login").onclick = () => accountRequest("login");
 $("account-cancel").onclick = () => accountRequest("cancel");
-$("account-refresh").onclick = loadAccount;
+$("account-refresh").onclick = () => loadAccount(true);
 $("account-login-link").onclick = event => {
   if (telegram?.openLink) { event.preventDefault(); telegram.openLink(event.currentTarget.href); }
 };

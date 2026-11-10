@@ -39,7 +39,7 @@ def validate_init_data(raw, token, owner, now=None):
 async def dispatch(bot, path, data):
     # Account controls belong to the paired owner, independently of any session.
     if path == "/api/account":
-        return await bot.accounts.read()
+        return await bot.accounts.read(refresh_usage=data.get("refreshUsage") == "1")
     if path == "/api/account/save":
         return await bot.accounts.save()
     if path == "/api/account/login":

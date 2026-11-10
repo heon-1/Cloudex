@@ -139,6 +139,20 @@ pre { font-family: "SFMono-Regular", Consolas, monospace; white-space: pre-wrap;
 .account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .account-actions button, #account-login-link { min-height: 40px; }
 .account-error { color: #e8b5a7; }
+#account-usage { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+#account-usage h4 { margin: 0 0 12px; color: #ddd; font-size: 13px; }
+.usage-bucket + .usage-bucket { margin-top: 16px; }
+.usage-bucket h5 { margin: 0 0 10px; font-size: 11px; color: #999; overflow-wrap: anywhere; }
+.usage-window + .usage-window { margin-top: 14px; }
+.usage-window-heading { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #aaa; }
+.usage-window-heading strong { color: #e7eee9; font-weight: 500; }
+.usage-window progress { appearance: none; display: block; width: 100%; height: 6px; margin: 9px 0 7px; border: 0; border-radius: 4px; background: #ffffff12; overflow: hidden; }
+.usage-window progress::-webkit-progress-bar { background: #ffffff12; border-radius: 4px; }
+.usage-window progress::-webkit-progress-value { background: #8db69d; border-radius: 4px; }
+.usage-window progress::-moz-progress-bar { background: #8db69d; border-radius: 4px; }
+.usage-window progress.usage-low::-webkit-progress-value { background: #d5a16d; }
+.usage-window progress.usage-low::-moz-progress-bar { background: #d5a16d; }
+.usage-reset { display: block; color: #999; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
 #account-login-pending { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
 #account-code { display: block; width: fit-content; padding: 10px 16px; margin: 12px 0; border-radius: 8px; background: #0003; font-size: 22px; letter-spacing: 3px; user-select: all; color: #eee; }
 #account-login-link { display: inline-flex; align-items: center; text-decoration: none; }

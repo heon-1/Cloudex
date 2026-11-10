@@ -53,6 +53,7 @@
       <h3 id="account-heading">Codex / ChatGPT 계정</h3>
       <strong id="account-name">계정 정보를 불러오세요</strong><p id="account-plan"></p>
       <p id="account-status" class="hint" role="status" aria-live="polite">로그인 정보는 이 서버에 저장됩니다.</p>
+      <section id="account-usage" aria-labelledby="account-usage-heading" hidden><h4 id="account-usage-heading">남은 사용량</h4><div id="account-usage-windows"></div><p id="account-usage-note" class="hint"></p></section>
       <div class="account-actions"><button id="account-save" class="primary" type="button" disabled>계정 저장</button><button id="account-login" class="subtle" type="button" disabled>다시 로그인</button><button id="account-refresh" class="subtle" type="button">상태 새로고침</button></div>
       <p id="account-busy" class="hint" hidden>모든 작업과 대기열이 끝나면 다시 로그인할 수 있습니다.</p>
       <div id="account-login-pending" hidden><p class="hint">로그인 페이지에서 아래 일회용 코드를 입력하세요. 완료되면 자동으로 계정 상태가 갱신됩니다.</p><code id="account-code"></code><div class="account-actions"><a id="account-login-link" class="primary" target="_blank" rel="noopener noreferrer" hidden>ChatGPT에서 로그인</a><button id="account-cancel" class="subtle" type="button">로그인 취소</button></div></div>

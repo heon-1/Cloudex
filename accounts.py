@@ -1,8 +1,35 @@
 """Owner-only account controls using Codex-managed persistent credentials."""
 import asyncio
 import contextlib
+import math
 import time
 from urllib.parse import urlsplit
+
+
+def usage_buckets(result):
+    """Expose only quota windows; never infer token counts or a quota reset."""
+    multiple = result.get("rateLimitsByLimitId")
+    entries = [(key, value) for key, value in multiple.items() if isinstance(value, dict)] if isinstance(multiple, dict) else []
+    if not entries and isinstance(result.get("rateLimits"), dict):
+        entries = [("codex", result["rateLimits"])]
+    buckets = []
+    for key, raw in entries:
+        bucket = {"id": raw.get("limitId") or key, "name": raw.get("limitName") or raw.get("limitId") or key}
+        for window in ("primary", "secondary"):
+            value = raw.get(window)
+            if not isinstance(value, dict):
+                bucket[window] = None
+                continue
+            percent, duration, reset = (value.get(field) for field in ("usedPercent", "windowDurationMins", "resetsAt"))
+            valid = lambda number: isinstance(number, (int, float)) and not isinstance(number, bool) and math.isfinite(number)
+            bucket[window] = {
+                "remainingPercent": round(100 - max(0, min(100, percent)), 1) if valid(percent) else None,
+                "windowDurationMins": duration if valid(duration) and duration > 0 else None,
+                "resetsAt": reset if valid(reset) and 0 < reset <= 253402300799 else None,
+            }
+        if bucket["primary"] is not None or bucket["secondary"] is not None:
+            buckets.append(bucket)
+    return buckets
 
 
 class Accounts:
@@ -10,6 +37,10 @@ class Accounts:
         self.bot = bot
         self.lock = asyncio.Lock()
         self.login = None
+        self.usage = None
+        self.usage_checked = 0
+        self.usage_revision = 0
+        self.usage_lock = asyncio.Lock()
 
     @property
     def pending(self):
@@ -20,6 +51,29 @@ class Accounts:
         return any(rt.active or rt.queue._unfinished_tasks for rt in self.bot.runtimes.values())
 
     def notification(self, event):
+        if event["method"] in ("account/updated", "account/login/completed", "cloudex/disconnected"):
+            self.usage = None
+            self.usage_checked = 0
+            self.usage_revision += 1
+        elif event["method"] == "account/rateLimits/updated":
+            # Notifications can contain one bucket of a multi-bucket snapshot.
+            params = event.get("params", {})
+            incoming = usage_buckets(params)
+            if incoming:
+                existing = {bucket["id"]: bucket for bucket in (self.usage or {}).get("buckets", [])}
+                raw_buckets = params.get("rateLimitsByLimitId") or {"codex": params.get("rateLimits", {})}
+                for key, raw in raw_buckets.items():
+                    if not isinstance(raw, dict):
+                        continue
+                    ident = raw.get("limitId") or key
+                    update = next((bucket for bucket in incoming if bucket["id"] == ident), None)
+                    if update and ident in existing:
+                        for window in ("primary", "secondary"):
+                            if window not in raw:
+                                update[window] = existing[ident].get(window)
+                existing.update({bucket["id"]: bucket for bucket in incoming})
+                self.usage = {"buckets": list(existing.values()), "updatedAt": int(time.time()), "error": None}
+                self.usage_revision += 1
         if event["method"] == "cloudex/disconnected" and self.pending:
             self.login = {"status": "failed", "message": "연결이 종료됐습니다. 다시 로그인해주세요."}
         elif event["method"] == "account/login/completed" and self.pending:
@@ -29,7 +83,30 @@ class Accounts:
             self.login = {"status": "completed" if params.get("success") else "failed",
                           "message": "로그인 완료" if params.get("success") else "로그인이 완료되지 않았습니다. 다시 시도해주세요."}
 
-    async def read(self, refresh=False):
+    async def read_usage(self, account, force=False):
+        if not account or account.get("type") not in ("chatgpt", "chatgptAuthTokens"):
+            self.usage = None
+            self.usage_checked = 0
+            return {"buckets": [], "updatedAt": None, "error": "로그인 후 사용량을 확인하세요." if not account else "이 계정은 남은 사용량 정보를 제공하지 않습니다."}
+        async with self.usage_lock:
+            if self.usage and not force and time.monotonic() - self.usage_checked < 30:
+                return self.usage
+            revision = self.usage_revision
+            try:
+                result = await self.bot.codex.call("account/rateLimits/read", {}, timeout=15)
+                buckets = usage_buckets(result)
+                if revision == self.usage_revision:
+                    self.usage = {"buckets": buckets, "updatedAt": int(time.time()),
+                                  "error": None if buckets else "사용량 정보가 아직 제공되지 않았습니다."}
+            except Exception:
+                if revision == self.usage_revision:
+                    self.usage = {**(self.usage or {"buckets": [], "updatedAt": None}),
+                                  "error": "사용량을 갱신하지 못했습니다. 잠시 후 다시 확인해주세요."}
+            if revision == self.usage_revision:
+                self.usage_checked = time.monotonic()
+            return self.usage or {"buckets": [], "updatedAt": None, "error": "사용량 정보를 다시 확인 중입니다."}
+
+    async def read(self, refresh=False, refresh_usage=False):
         try:
             await self.bot.codex.start()
             result = await self.bot.codex.call("account/read", {"refreshToken": refresh})
@@ -40,6 +117,7 @@ class Accounts:
         account = ({key: raw[key] for key in ("type", "email", "planType", "workspaceName") if key in raw}
                    if isinstance(raw, dict) else None)
         return {"account": account, "requiresOpenaiAuth": bool(result.get("requiresOpenaiAuth")),
+                "usage": await self.read_usage(account, force=refresh_usage),
                 "savedProfile": self.bot.state.get("account_profile"),
                 "login": dict(self.login) if self.login else None,
                 "canLogin": not self.busy and not self.pending}
