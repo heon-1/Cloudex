@@ -55,6 +55,12 @@ async def dispatch(bot, path, data):
         raise ValueError("삭제 중인 세션입니다.")
     context = bot.session_context.set(sid)
     try:
+        if path == "/api/queue":
+            return await bot.queued.read()
+        if path == "/api/queue/delete":
+            return await bot.queued.delete(data.get("id"))
+        if path == "/api/queue/apply":
+            return await bot.queued.apply(data.get("id"), data.get("expectedTurnId"))
         if path == "/api/status":
             return {"selected": bot.state["selected_session"], "server": bot.server_id,
                 "messageModes": ["queue", "steer"], "canDeleteSessions": True,
@@ -234,7 +240,7 @@ class MiniApp:
                             raise ValueError("JSON 객체가 필요합니다.")
                     else:
                         data = {k: v[-1] for k, v in parse_qs(parsed.query).items()}
-                        if path not in ("/api/status", "/api/events", "/api/files", "/api/history", "/api/models", "/api/download", "/api/account"):
+                        if path not in ("/api/status", "/api/events", "/api/files", "/api/history", "/api/models", "/api/download", "/api/account", "/api/queue"):
                             raise ValueError("이 요청에는 POST가 필요합니다.")
                     if path == "/api/download":
                         sid = data.get("session") or app.bot.state["selected_session"]

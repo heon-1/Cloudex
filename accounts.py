@@ -48,7 +48,7 @@ class Accounts:
 
     @property
     def busy(self):
-        return any(rt.active or rt.queue._unfinished_tasks for rt in self.bot.runtimes.values())
+        return any(rt.active or rt.queue._unfinished_tasks or rt.queue_lock.locked() for rt in self.bot.runtimes.values())
 
     def notification(self, event):
         if event["method"] in ("account/updated", "account/login/completed", "cloudex/disconnected"):

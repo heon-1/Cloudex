@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 from accounts import Accounts
+from queueing import QueuedRequests, WorkQueue
 
 BASE = Path(__file__).resolve().parent
 MAX_DOWNLOAD = 20 * 1024 * 1024
@@ -326,9 +327,15 @@ class SessionRuntime:
         self.data = data
         self.root = base / "workspace" if sid == "main" else base / "workspaces" / sid
         self.root.mkdir(parents=True, exist_ok=True)
-        self.queue = asyncio.Queue(maxsize=20)
+        self.queue = WorkQueue(maxsize=20)
+        self.queue_lock = asyncio.Lock()
         for text in data.get("pending", []):
             self.queue.put_nowait(text)
+        pending = data.setdefault("pending", [])
+        ids = data.get("pending_ids", [])
+        if len(ids) != len(pending) or any(not isinstance(ident, str) or not ident for ident in ids) or len(set(ids)) != len(ids):
+            ids = [secrets.token_hex(8) for _ in pending]
+        data["pending_ids"] = ids
         if data.get("inflight"):
             data["interrupted_job"] = data.pop("inflight")
         self.active = None
@@ -361,6 +368,7 @@ class Bot:
         self.telegram = Telegram(config["bot_token"])
         self.codex = Codex(self.event)
         self.accounts = Accounts(self)
+        self.queued = QueuedRequests(self)
         self.events = asyncio.Queue()
         self.session_events = {}
         self.event_tasks = {}
@@ -447,7 +455,7 @@ class Bot:
                 raise ValueError("세션을 찾을 수 없습니다.")
             if rt.deleting:
                 raise ValueError("이미 삭제 중인 세션입니다.")
-            if rt.active or rt.queue._unfinished_tasks:
+            if rt.active or rt.queue._unfinished_tasks or rt.queue_lock.locked():
                 raise ValueError("작업을 중단하고 대기열을 비운 뒤 삭제하세요.")
             if rt.transfers:
                 raise ValueError("파일 첨부가 끝난 뒤 삭제하세요.")
@@ -701,13 +709,18 @@ class Bot:
     async def work(self, sid=None):
         self.session_context.set(sid or self.current_sid)
         while True:
-            text = await self.queue.get()
-            try:
-                self.runtime.turn_ready.clear()
+            await self.queue.available.wait()
+            async with self.runtime.queue_lock:
+                if self.queue.empty():
+                    continue
+                text = self.queue.get_nowait()
                 pending = self.session_state.setdefault("pending", [])
                 if pending:
                     pending.pop(0)
+                    self.session_state["pending_ids"].pop(0)
                 self.session_state["inflight"] = text
+            try:
+                self.runtime.turn_ready.clear()
                 self.persist()
                 await self.session()
                 self.turn_done.clear()
@@ -754,15 +767,15 @@ class Bot:
             raise ValueError("계정 로그인을 완료하거나 취소한 뒤 작업을 보내주세요.")
         if self.runtime.deleting:
             raise ValueError("삭제 중인 세션입니다.")
-        was_idle = not self.runtime.active and not self.queue._unfinished_tasks
-        try:
+        async with self.runtime.queue_lock:
+            if self.queue.full():
+                raise ValueError("대기 작업이 20개입니다. 완료 후 다시 보내주세요.")
+            was_idle = not self.runtime.active and not self.queue._unfinished_tasks
+            self.queued.write([*self.session_state.get("pending", []), text],
+                              [*self.session_state.get("pending_ids", []), secrets.token_hex(8)])
             self.queue.put_nowait(text)
             if was_idle:
                 self.runtime.turn_ready.clear()
-            self.session_state.setdefault("pending", []).append(text)
-            self.persist()
-        except asyncio.QueueFull:
-            raise ValueError("대기 작업이 20개입니다. 완료 후 다시 보내주세요.") from None
         if self.started:
             self.ensure_worker(self.current_sid)
         self.background(self.tell(f"접수했습니다. 대기 {self.queue.qsize()}개 · /status · /stop",
@@ -995,13 +1008,12 @@ class Bot:
             else:
                 await self.telegram.say(chat, "실행 중인 작업이 없습니다.")
         elif text == "/clear":
-            count = 0
-            while not self.queue.empty():
-                self.queue.get_nowait()
-                self.queue.task_done()
-                count += 1
-            self.session_state["pending"] = []
-            self.persist()
+            async with self.runtime.queue_lock:
+                count = self.queue.qsize()
+                self.queued.write([], [])
+                while not self.queue.empty():
+                    self.queue.get_nowait()
+                    self.queue.task_done()
             await self.telegram.say(chat, f"대기 작업 {count}개를 취소했습니다.")
         elif text == "/files":
             files = []

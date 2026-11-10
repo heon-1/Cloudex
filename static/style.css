@@ -94,12 +94,30 @@ h2 { font-size: 26px; font-weight: 500; letter-spacing: -1px; margin: 0 0 16px; 
 .message.command .text { background: #191919; padding: 14px; border: 1px solid var(--line); border-radius: 8px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; max-height: 300px; overflow: auto; }
 #older-history { align-self: center; margin-bottom: 20px; }
 #composer { padding: 0 28px 14px; flex-shrink: 0; }
-.composer-status, #attachment-note, #prompt-container, #prompt-form, .composer-footer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
+#attachment-note, #prompt-container, #prompt-form, .composer-footer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
 #prompt-container { position: relative; }
-.composer-status { display: flex; align-items: center; gap: 10px; min-height: 20px; font-size: 10px; color: #888; padding: 4px 6px 0; }
-#session-status { display: flex; align-items: center; gap: 6px; }
+#session-status { width: 100%; max-width: 760px; margin: 0 auto; padding: 4px 0 12px; color: #aaa; font-size: 12px; }
+.activity-bubble { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; background: #ffffff05; border: 1px solid var(--line); border-radius: 12px; max-width: 100%; overflow-wrap: anywhere; }
 body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 3px #80b99510; }
-#queue-status { margin-left: auto; }
+#queue-status { position: absolute; bottom: calc(100% + 8px); left: 8px; z-index: 3; padding: 6px 12px; min-height: 28px; font-size: 11px; color: #ddd; background: #303030; border: 1px solid #ffffff24; border-radius: 99px; box-shadow: 0 4px 14px #0003; }
+#queue-status:hover { background: #3b3b3b; }
+body.has-queue #chat { padding-bottom: 44px; }
+#prompt-container.has-queued-requests .toast.above-prompt { bottom: calc(100% + 48px); }
+#queue-modal { position: fixed; inset: 0; margin: auto; padding: 0; width: min(640px, calc(100% - 24px)); max-width: none; max-height: min(80dvh, 720px); border: 1px solid #ffffff24; border-radius: 16px; color: #ececec; background: #242424; box-shadow: 0 16px 64px #0008; overflow: hidden; }
+#queue-modal[open] { display: flex; flex-direction: column; }
+#queue-modal::backdrop { background: #0009; }
+#queue-modal .queue-modal-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+#queue-title { margin: 0; font-size: 16px; }
+#queue-close { width: 44px; height: 44px; }
+.queue-modal-body { overflow-y: auto; padding: 4px 16px 16px; min-height: 0; overscroll-behavior: contain; }
+#queue-list { list-style: none; padding: 0; margin: 0; }
+.queue-item { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 12px 0 0; background: #ffffff03; }
+.queue-item h3 { margin: 0 0 10px; font-size: 11px; color: #999; }
+.queue-item pre { max-height: 200px; overflow-y: auto; margin: 0; font-family: inherit; color: #ddd; }
+.queue-item-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.queue-item-actions button { min-height: 40px; }
+.queue-remove { color: #d9a09a; }
+#queue-modal .toast { position: absolute; left: 50%; bottom: 12px; max-width: calc(100% - 24px); }
 #prompt-form { background: #2b2b2b; border: 1px solid #ffffff17; border-radius: 17px; padding: 10px 12px 8px; box-shadow: 0 4px 18px #0000000c; }
 #prompt-form:focus-within { border-color: #ffffff2d; }
 textarea { width: 100%; display: block; resize: none; max-height: 180px; min-height: 56px; padding: 0 6px; border: 0; background: transparent; color: #ececec; line-height: 1.65; font-size: 13px; outline: none; }
