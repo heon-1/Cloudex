@@ -274,9 +274,12 @@ window.addEventListener("resize", () => CustomSelect.active?.close());
 window.visualViewport?.addEventListener("resize", () => CustomSelect.active?.close());
 
 let toastTimer = null;
-function showToast(text) {
+function showToast(text, abovePrompt = false) {
   clearTimeout(toastTimer);
-  $("toast").hidden = false;
+  const toast = $("toast");
+  (abovePrompt ? $("prompt-container") : document.body).append(toast);
+  toast.classList.toggle("above-prompt", abovePrompt);
+  toast.hidden = false;
   $("toast-message").textContent = text;
   toastTimer = setTimeout(() => { $("toast").hidden = true; }, 3200);
 }
@@ -350,6 +353,10 @@ function hideSidebar() {
 }
 async function selectSession(sid, notify = true) {
   if (deletedSessions.has(sid)) return;
+  if ($("toast").classList.contains("above-prompt")) {
+    clearTimeout(toastTimer);
+    $("toast").hidden = true;
+  }
   const sequence = ++selectionSequence;
   saveDraft();
   selected = sid;
@@ -733,7 +740,7 @@ $("prompt-form").onsubmit = async event => {
     if (selected === sid) {
       error("");
       const confirmation = {queue: "대기열에 추가했어요", steer: "현재 작업에 전달했어요", start: "새 작업을 접수했어요", command: "명령을 적용했어요"}[result.delivery];
-      if (confirmation) showToast(confirmation);
+      if (confirmation) showToast(confirmation, result.delivery === "queue");
     }
     refresh().catch(e => error(e.message));
   } catch (e) {

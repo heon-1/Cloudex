@@ -95,7 +95,8 @@ h2 { font-size: 26px; font-weight: 500; letter-spacing: -1px; margin: 0 0 16px; 
 .message.command .text { background: #191919; padding: 14px; border: 1px solid var(--line); border-radius: 8px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; max-height: 300px; overflow: auto; }
 #older-history { align-self: center; margin-bottom: 20px; }
 #composer { padding: 0 28px 14px; flex-shrink: 0; }
-.composer-status, #attachment-note, #prompt-form, .composer-footer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
+.composer-status, #attachment-note, #prompt-container, #prompt-form, .composer-footer { width: 100%; max-width: 760px; margin-left: auto; margin-right: auto; }
+#prompt-container { position: relative; }
 .composer-status { display: flex; align-items: center; gap: 10px; min-height: 26px; font-size: 10px; color: #888; padding: 0 5px 7px; }
 #session-status { display: flex; align-items: center; gap: 6px; }
 body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 3px #80b99510; }
@@ -238,6 +239,7 @@ body.sidebar-collapsed #open-sidebar { display: inline-flex; }
 .custom-select-popup .custom-select-option { border: 0; margin: 0; }
 .toast { position: fixed; z-index: 40; left: calc(50% + 130px); bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px)); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; width: max-content; max-width: calc(100vw - 32px); padding: 13px 18px; color: #f0f0f0; background: #343434; border: 1px solid #ffffff24; border-radius: 12px; box-shadow: 0 8px 28px #0006; font-size: 13px; line-height: 1.5; pointer-events: none; }
 .toast-icon { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; color: #b7d5bf; background: #80b99518; font-size: 12px; flex-shrink: 0; }
+.toast.above-prompt { position: absolute; left: 50%; bottom: calc(100% + 10px); max-width: 100%; }
 body.sidebar-collapsed .toast { left: 50%; }
 @media (max-width: 760px) {
   .custom-select-trigger { min-height: 48px; font-size: 13px; }
