@@ -61,11 +61,16 @@ async def dispatch(bot, path, data):
             return await bot.queued.read()
         if path == "/api/queue/delete":
             return await bot.queued.delete(data.get("id"))
+        if path == "/api/queue/edit":
+            return await bot.queued.edit(data.get("id"), data.get("text"), data.get("expectedText"))
+        if path == "/api/queue/reorder":
+            return await bot.queued.reorder(data.get("ids"), data.get("expectedIds"))
         if path == "/api/queue/apply":
             return await bot.queued.apply(data.get("id"), data.get("expectedTurnId"))
         if path == "/api/status":
             return {"selected": bot.state["selected_session"], "server": bot.server_id,
                 "messageModes": ["queue", "steer"], "canDeleteSessions": True,
+                "canEditQueuedRequests": True, "canReorderQueuedRequests": True,
                 "sessions": [{"id": key, "name": rt.data["name"], "archived": bool(rt.data.get("archived")),
                     "active": bool(rt.active or rt.queue._unfinished_tasks > rt.queue.qsize()), "queued": rt.queue.qsize(),
                     "model": rt.data.get("model") or rt.effective.get("model"), "effort": rt.data.get("effort"),

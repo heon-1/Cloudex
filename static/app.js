@@ -479,13 +479,17 @@ async function saveSettings() {
 
 function getSession() { return state?.sessions.find(s => s.id === selected); }
 let queueSession = null, queueState = null, queueLoading = false, queueAction = null, queueVersion = 0, queueSignature = "", queuePreviewSignature = "", queueReadToken = 0;
+let queueEditor = null, queueDrag = null;
 function bindQueueSession() {
   if (queueSession === selected) return;
+  finishQueueDrag(null, true);
+  closeQueueEditor();
   queueSession = selected; queueState = null; queueSignature = queuePreviewSignature = "";
   queueVersion++; queueReadToken++;
   $("queue-preview-message").hidden = true;
 }
 function renderQueuePreview() {
+  if (queueDrag) return;
   const chat = $("chat"), stickToBottom = chat.scrollHeight - chat.clientHeight - chat.scrollTop <= 48;
   const wasHidden = $("queue-preview").hidden;
   const queued = Math.max(0, Number(getSession()?.queued) || 0);
@@ -495,7 +499,7 @@ function renderQueuePreview() {
   $("queue-status").hidden = count <= 3;
   $("queue-status").textContent = `더 보기 (+${Math.max(0, count - 3)})`;
   $("queue-status").setAttribute("aria-label", `대기 요청 ${count}개 전체 보기`);
-  const signature = JSON.stringify([selected, items.slice(0, 3), queueAction?.id]);
+  const signature = JSON.stringify([selected, items.slice(0, 3), queueAction?.id, state?.canEditQueuedRequests, state?.canReorderQueuedRequests]);
   if (signature === queuePreviewSignature) {
     if (stickToBottom && wasHidden !== $("queue-preview").hidden) chat.scrollTop = chat.scrollHeight;
     return;
@@ -507,34 +511,42 @@ function renderQueuePreview() {
     const text = button(item.text, openQueue, "queue-preview-text");
     text.setAttribute("aria-label", `${index + 1}번째 대기 요청 전체 보기: ${item.text.slice(0, 120)}`);
     const actions = el("div", null, "queue-preview-actions");
+    const edit = button("수정", () => openQueueEditor(item.id));
+    edit.hidden = !state?.canEditQueuedRequests;
     const remove = button("삭제", () => editQueue("delete", item.id), "queue-remove");
     const apply = button(queueAction?.id === item.id ? "처리 중…" : "바로 적용", () => editQueue("apply", item.id));
-    remove.disabled = apply.disabled = !!queueAction;
-    actions.append(remove, apply); row.append(text, actions); list.append(row);
+    edit.disabled = remove.disabled = apply.disabled = !!queueAction;
+    actions.append(edit, remove, apply); row.append(queueDragHandle(item.id, index), text, actions); list.append(row);
   }
   if (stickToBottom) chat.scrollTop = chat.scrollHeight;
 }
 function renderQueue() {
+  if (queueDrag) return;
   renderQueuePreview();
+  renderQueueEditor();
   const snapshot = queueState;
-  $("queue-hint").textContent = snapshot?.activeTurnId ? "바로 적용하면 현재 작업에 전달됩니다." : "바로 적용하면 선택한 요청부터 실행합니다.";
-  const signature = JSON.stringify([snapshot?.session, snapshot?.activeTurnId, snapshot?.items, queueAction?.id]);
+  $("queue-hint").textContent = (state?.canReorderQueuedRequests ? "손잡이를 드래그해 순서를 바꿀 수 있어요. " : "") + (snapshot?.activeTurnId ? "바로 적용하면 현재 작업에 전달됩니다." : "바로 적용하면 선택한 요청부터 실행합니다.");
+  const signature = JSON.stringify([snapshot?.session, snapshot?.activeTurnId, snapshot?.items, queueAction?.id, state?.canEditQueuedRequests, state?.canReorderQueuedRequests]);
   if (signature === queueSignature) return;
   queueSignature = signature;
   const list = $("queue-list"); list.replaceChildren();
   for (const [index, item] of (snapshot?.items || []).entries()) {
     const row = el("li", null, "queue-item"); row.dataset.id = item.id;
-    row.append(el("h3", `${index + 1}번째 대기 요청`), el("pre", item.text));
+    const heading = el("div", null, "queue-item-heading");
+    heading.append(queueDragHandle(item.id, index), el("h3", `${index + 1}번째 대기 요청`));
+    row.append(heading, el("pre", item.text));
     const actions = el("div", null, "queue-item-actions");
+    const edit = button("수정", () => openQueueEditor(item.id), "subtle");
+    edit.hidden = !state?.canEditQueuedRequests;
     const remove = button("삭제", () => editQueue("delete", item.id), "subtle queue-remove");
     const apply = button(queueAction?.id === item.id ? "처리 중…" : "바로 적용", () => editQueue("apply", item.id), "primary");
-    remove.disabled = apply.disabled = !!queueAction;
-    actions.append(remove, apply); row.append(actions); list.append(row);
+    edit.disabled = remove.disabled = apply.disabled = !!queueAction;
+    actions.append(edit, remove, apply); row.append(actions); list.append(row);
   }
   $("queue-empty").hidden = !snapshot || !!snapshot.items.length;
 }
 async function loadQueue() {
-  if (queueLoading || queueAction || (!$("queue-modal").open && (currentTab !== "chat" || !getSession()?.queued))) return;
+  if (queueLoading || queueAction || queueDrag || (!$("queue-modal").open && (currentTab !== "chat" || !getSession()?.queued))) return;
   bindQueueSession();
   const sid = queueSession, version = queueVersion, token = ++queueReadToken;
   queueLoading = true;
@@ -556,26 +568,182 @@ function openQueue() {
   loadQueue();
 }
 function closeQueue() {
+  finishQueueDrag(null, true);
+  closeQueueEditor();
   if (!$("queue-modal").open) return;
   $("queue-modal").close();
   if (!$("queue-preview").hidden && !$("queue-status").hidden) $("queue-status").focus({preventScroll: true});
   else ((!$("queue-preview").hidden && $("queue-preview-list").querySelector("button")) || $("prompt")).focus({preventScroll: true});
 }
-async function editQueue(action, id) {
+function openQueueEditor(id) {
+  if (queueAction || queueEditor || queueDrag) return;
+  const item = queueState?.items.find(item => item.id === id);
+  if (!item) return;
+  queueEditor = {id, session: queueSession, original: item.text, opener: document.activeElement};
+  $("queue-edit-text").value = item.text;
+  $("queue-edit-message").hidden = true;
+  renderQueueEditor();
+  $("queue-edit-modal").showModal();
+  $("queue-edit-text").focus({preventScroll: true});
+}
+function queueDragHandle(id, index) {
+  const handle = button("⠿", () => {}, "queue-drag-handle");
+  handle.hidden = !state?.canReorderQueuedRequests;
+  handle.disabled = !!queueAction || (queueState?.items.length || 0) < 2;
+  handle.title = "드래그로 순서 변경 · 위/아래 화살표 키로 이동";
+  handle.setAttribute("aria-label", `${index + 1}번째 대기 요청 순서 변경`);
+  handle.onpointerdown = event => {
+    if (queueAction || queueDrag || queueEditor || event.button !== 0 || event.isPrimary === false) return;
+    const row = handle.closest("li"), list = row.parentElement;
+    queueDrag = {id, pointer: event.pointerId, handle, row, list, session: queueSession, version: queueVersion,
+      ids: queueState.items.map(item => item.id), x: event.clientX, y: event.clientY};
+    queueReadToken++;
+    row.classList.add("queue-dragging");
+    handle.setAttribute("aria-pressed", "true");
+    handle.focus({preventScroll: true});
+    list.setPointerCapture?.(event.pointerId);
+    queueDrag.frame = requestAnimationFrame(scrollQueueDrag);
+    event.preventDefault();
+  };
+  handle.onkeydown = event => {
+    if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || queueAction || queueDrag) return;
+    event.preventDefault();
+    const ids = queueState.items.map(item => item.id), expectedIds = [...ids], from = ids.indexOf(id);
+    if (from < 0) return;
+    const to = event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1 : Math.max(0, Math.min(ids.length - 1, from + (event.key === "ArrowUp" ? -1 : 1)));
+    if (from === to) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    const listId = handle.closest("ol").id, sid = queueSession;
+    reorderQueue(ids, expectedIds).then(() => {
+      if (selected === sid) {
+        const moved = Array.from($(listId).querySelectorAll("li")).find(row => row.dataset.id === id)?.querySelector(".queue-drag-handle");
+        moved?.focus({preventScroll: true}); moved?.scrollIntoView({block: "nearest"});
+      }
+    }).catch(e => error(e.message));
+  };
+  return handle;
+}
+function moveQueueDrag(event) {
+  const drag = queueDrag;
+  if (!drag || event.pointerId !== drag.pointer) return;
+  event.preventDefault();
+  drag.x = event.clientX; drag.y = event.clientY;
+  positionQueueDrag();
+}
+function scrollQueueDrag() {
+  if (!queueDrag) return;
+  positionQueueDrag();
+  queueDrag.frame = requestAnimationFrame(scrollQueueDrag);
+}
+function positionQueueDrag() {
+  const drag = queueDrag;
+  if (!drag) return;
+  let y = drag.y;
+  const scroll = drag.list.closest(".queue-modal-body");
+  if (scroll) {
+    const bounds = scroll.getBoundingClientRect();
+    if (drag.y < bounds.top + 40) scroll.scrollTop -= 20;
+    else if (drag.y > bounds.bottom - 40) scroll.scrollTop += 20;
+    y = Math.max(bounds.top + 2, Math.min(bounds.bottom - 2, y));
+  }
+  const listBounds = drag.list.getBoundingClientRect();
+  if (drag.x < listBounds.left || drag.x > listBounds.right) return;
+  const before = Array.from(drag.list.children).find(row => {
+    if (row === drag.row) return false;
+    const bounds = row.getBoundingClientRect();
+    return y < bounds.top + bounds.height / 2;
+  }) || null;
+  if (drag.row.nextElementSibling !== before) drag.list.insertBefore(drag.row, before);
+}
+function finishQueueDrag(event, cancel = false) {
+  const drag = queueDrag;
+  if (!drag || (event && event.pointerId !== drag.pointer)) return;
+  const visibleIds = Array.from(drag.list.children).map(row => row.dataset.id);
+  const ids = [...visibleIds, ...drag.ids.filter(id => !visibleIds.includes(id))];
+  queueDrag = null;
+  cancelAnimationFrame(drag.frame);
+  drag.row.classList.remove("queue-dragging");
+  drag.handle.setAttribute("aria-pressed", "false");
+  if (drag.list.hasPointerCapture?.(drag.pointer)) drag.list.releasePointerCapture(drag.pointer);
+  queueSignature = queuePreviewSignature = "";
+  renderQueue();
+  if (!cancel && drag.session === selected && drag.version === queueVersion && ids.some((id, index) => id !== drag.ids[index])) {
+    reorderQueue(ids, drag.ids).catch(e => error(e.message));
+  }
+}
+async function reorderQueue(ids, expectedIds) {
+  if (queueAction || !queueState || !state?.canReorderQueuedRequests) return;
+  const sid = queueSession, version = queueVersion;
+  queueAction = {id: "reorder"}; queueReadToken++; renderQueue();
+  try {
+    const result = await api("/api/queue/reorder", {session: sid, ids, expectedIds}, true);
+    if (version === queueVersion) {
+      queueState = result;
+      $("queue-message").hidden = $("queue-preview-message").hidden = true;
+    }
+    showToast(selected === sid ? "대기 순서를 변경했어요" : "이전 대화의 대기 순서를 변경했어요");
+  } catch (e) {
+    if (version === queueVersion) {
+      try {
+        const latest = await api("/api/queue", {session: sid});
+        if (version === queueVersion) queueState = latest;
+      } catch { /* Retain the last confirmed order until the next refresh. */ }
+      if (version === queueVersion) {
+        for (const id of ["queue-message", "queue-preview-message"]) { $(id).textContent = e.message; $(id).hidden = false; }
+      }
+    }
+  } finally {
+    queueAction = null;
+    if (version === queueVersion) renderQueue();
+  }
+}
+function renderQueueEditor() {
+  if (!queueEditor) return;
+  const missing = !queueState?.items.some(item => item.id === queueEditor.id);
+  $("queue-edit-text").disabled = !!queueAction;
+  $("queue-edit-save").disabled = !!queueAction || missing || !$("queue-edit-text").value.trim();
+  $("queue-edit-save").textContent = queueAction?.id === queueEditor.id ? "저장 중…" : "저장";
+  if (missing) {
+    $("queue-edit-message").textContent = "이미 실행되거나 삭제된 요청입니다. 입력한 내용은 복사할 수 있어요.";
+    $("queue-edit-message").hidden = false;
+  }
+}
+function closeQueueEditor() {
+  if (!queueEditor) return;
+  const opener = queueEditor.opener;
+  queueEditor = null;
+  $("queue-edit-modal").close();
+  if (opener?.isConnected) opener.focus({preventScroll: true});
+  else if ($("queue-modal").open) $("queue-close").focus({preventScroll: true});
+  else $("prompt").focus({preventScroll: true});
+}
+async function saveQueueEditor(event) {
+  event.preventDefault();
+  if (!queueEditor || queueAction || $("queue-edit-save").disabled) return;
+  const editor = queueEditor;
+  const saved = await editQueue("edit", editor.id, {text: $("queue-edit-text").value, expectedText: editor.original});
+  if (saved && queueEditor === editor) closeQueueEditor();
+}
+async function editQueue(action, id, changes = {}) {
   if (queueAction || !queueState) return;
   const sid = queueSession, version = queueVersion, turn = queueState.activeTurnId;
   const sessionName = state?.sessions.find(session => session.id === sid)?.name || "대화";
   queueAction = {id}; queueReadToken++; renderQueue();
   try {
-    const result = await api("/api/queue/" + action, {session: sid, id, ...(action === "apply" && turn ? {expectedTurnId: turn} : {})}, true);
+    const result = await api("/api/queue/" + action, {session: sid, id, ...changes, ...(action === "apply" && turn ? {expectedTurnId: turn} : {})}, true);
     if (version === queueVersion) { queueState = result; $("queue-message").hidden = true; $("queue-preview-message").hidden = true; }
-    const confirmation = action === "delete" ? "대기 요청을 삭제했어요" : result.delivery === "steer" ? "현재 작업에 바로 적용했어요" : "선택한 요청을 먼저 실행합니다";
+    const confirmation = action === "edit" ? "대기 요청을 수정했어요" : action === "delete" ? "대기 요청을 삭제했어요" : result.delivery === "steer" ? "현재 작업에 바로 적용했어요" : "선택한 요청을 먼저 실행합니다";
     showToast(selected === sid ? confirmation : sessionName + " · " + confirmation);
     await refresh().catch(e => error(e.message));
+    return true;
   } catch (e) {
     if (version === queueVersion) {
       for (const id of ["queue-message", "queue-preview-message"]) { $(id).textContent = e.message; $(id).hidden = false; }
+      if (action === "edit" && queueEditor?.id === id && queueEditor.session === sid) {
+        $("queue-edit-message").textContent = e.message; $("queue-edit-message").hidden = false;
+      }
     }
+    return false;
   } finally {
     queueAction = null;
     if (version === queueVersion) renderQueue();
@@ -1035,7 +1203,13 @@ $("close-sidebar").onclick = () => {
   }
 };
 $("scrim").onclick = hideSidebar;
+document.addEventListener("pointermove", moveQueueDrag, {passive: false});
+document.addEventListener("pointerup", event => finishQueueDrag(event));
+document.addEventListener("pointercancel", event => finishQueueDrag(event, true));
+document.addEventListener("lostpointercapture", event => finishQueueDrag(event, true));
 document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && queueDrag) { event.preventDefault(); finishQueueDrag(null, true); return; }
+  if (event.key === "Escape" && $("queue-edit-modal").open) { event.preventDefault(); closeQueueEditor(); return; }
   if (event.key === "Escape" && $("queue-modal").open) { event.preventDefault(); closeQueue(); return; }
   if (event.key === "Escape" && $("settings").open) {
     event.preventDefault();
@@ -1071,6 +1245,10 @@ $("effort-select").onchange = $("policy-select").onchange = () => { settingsDirt
 $("save-settings").onclick = saveSettings;
 $("queue-status").onclick = openQueue;
 $("queue-close").onclick = closeQueue;
+$("queue-edit-form").onsubmit = saveQueueEditor;
+$("queue-edit-text").oninput = renderQueueEditor;
+$("queue-edit-cancel").onclick = closeQueueEditor;
+$("queue-edit-modal").addEventListener("cancel", event => { event.preventDefault(); closeQueueEditor(); });
 $("queue-modal").addEventListener("cancel", event => { event.preventDefault(); closeQueue(); });
 $("account-save").onclick = () => accountRequest("save");
 $("account-login").onclick = () => accountRequest("login");

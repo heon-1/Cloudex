@@ -83,6 +83,49 @@ class QueuedRequests:
             self.remove(self.position(ident))
             return self.snapshot()
 
+    async def edit(self, ident, text, expected_text):
+        if not isinstance(text, str) or not text.strip() or len(text.strip()) > 30000:
+            raise ValueError("메시지는 1~30,000자로 입력하세요.")
+        if not isinstance(expected_text, str):
+            raise ValueError("수정할 요청을 다시 열어주세요.")
+        rt = self.bot.runtime
+        async with rt.queue_lock:
+            index = self.position(ident)
+            if rt.data.get("archived"):
+                raise ValueError("보관된 세션은 먼저 복원해주세요.")
+            if rt.data["pending"][index] != expected_text:
+                raise ValueError("다른 곳에서 수정된 요청입니다. 최신 내용을 확인한 뒤 다시 수정해주세요.")
+            text = text.strip()
+            pending = list(rt.data["pending"])
+            pending[index] = text
+            self.write(pending, list(rt.data["pending_ids"]))
+            rt.queue._queue[index] = text
+            return self.snapshot()
+
+    async def reorder(self, ids, expected_ids):
+        for values in (ids, expected_ids):
+            if (not isinstance(values, list) or len(values) > 20 or
+                    any(not isinstance(ident, str) or not ident or len(ident) > 128 for ident in values) or
+                    len(set(values)) != len(values)):
+                raise ValueError("대기 요청의 순서를 확인해주세요.")
+        rt = self.bot.runtime
+        async with rt.queue_lock:
+            if rt.data.get("archived"):
+                raise ValueError("보관된 세션은 먼저 복원해주세요.")
+            current_ids = rt.data.get("pending_ids", [])
+            pending = rt.data.get("pending", [])
+            if expected_ids != current_ids:
+                raise ValueError("대기열이 바뀌었습니다. 최신 순서를 확인한 뒤 다시 이동해주세요.")
+            if set(ids) != set(current_ids) or len(pending) != len(current_ids) or list(rt.queue._queue) != pending:
+                raise ValueError("대기열 상태가 바뀌었습니다. 다시 확인해주세요.")
+            if ids != current_ids:
+                texts = dict(zip(current_ids, pending))
+                pending = [texts[ident] for ident in ids]
+                self.write(pending, list(ids))
+                rt.queue._queue.clear()
+                rt.queue._queue.extend(pending)
+            return self.snapshot()
+
     async def apply(self, ident, expected_turn_id=None):
         rt = self.bot.runtime
         async with rt.queue_lock:

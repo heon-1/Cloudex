@@ -64,6 +64,83 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(self.bot.queue._queue), ["keep"])
         self.assertEqual(self.bot.queue._unfinished_tasks, 1)
 
+    async def test_edit_preserves_identity_order_accounting_and_survives_restart(self):
+        items = await self.fill("same", "same", "last")
+        self.bot.runtime.active = "running"
+        self.bot.session_state["inflight"] = "original"
+        result = await dispatch(self.bot, "/api/queue/edit", {
+            "id": items[1]["id"], "text": "  revised\nrequest  ", "expectedText": "same"})
+        self.assertEqual([row["id"] for row in result["items"]], [row["id"] for row in items])
+        self.assertEqual([row["text"] for row in result["items"]], ["same", "revised\nrequest", "last"])
+        self.assertEqual(list(self.bot.queue._queue), ["same", "revised\nrequest", "last"])
+        self.assertEqual(self.bot.queue._unfinished_tasks, 3)
+        self.assertTrue(self.bot.queue.available.is_set())
+        self.assertEqual(self.bot.runtime.active, "running")
+        self.assertEqual(self.bot.session_state["inflight"], "original")
+        restarted = Bot(self.bot.config, self.base)
+        self.assertEqual(list(restarted.queue._queue), ["same", "revised\nrequest", "last"])
+        self.assertEqual(restarted.session_state["pending_ids"], [row["id"] for row in items])
+
+    async def test_invalid_or_stale_edit_does_not_change_waiting_requests(self):
+        items = await self.fill("keep", "other")
+        for text, expected in [(None, "keep"), (42, "keep"), (" \n ", "keep"),
+                               ("x" * 30001, "keep"), ("new", None), ("new", "old")]:
+            with self.assertRaises(ValueError):
+                await dispatch(self.bot, "/api/queue/edit", {
+                    "id": items[0]["id"], "text": text, "expectedText": expected})
+        await self.bot.queued.delete(items[0]["id"])
+        with self.assertRaises(ValueError):
+            await self.bot.queued.edit(items[0]["id"], "new", "keep")
+        self.assertEqual(list(self.bot.queue._queue), ["other"])
+
+    async def test_edit_persistence_failure_leaves_both_copies_unchanged(self):
+        items = await self.fill("keep")
+        with patch.object(self.bot, "persist", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                await self.bot.queued.edit(items[0]["id"], "new", "keep")
+        self.assertEqual(self.bot.session_state["pending"], ["keep"])
+        self.assertEqual(list(self.bot.queue._queue), ["keep"])
+        self.assertEqual(self.bot.queue._unfinished_tasks, 1)
+
+    async def test_edit_is_session_scoped_and_archived_edits_are_rejected(self):
+        items = await self.fill("main job")
+        other = self.bot.create_session("other")
+        await self.fill("other job")
+        await dispatch(self.bot, "/api/queue/edit", {
+            "session": "main", "id": items[0]["id"], "text": "main revised", "expectedText": "main job"})
+        self.assertEqual(self.bot.state["selected_session"], other)
+        self.assertEqual(list(self.bot.queue._queue), ["other job"])
+        self.assertEqual(list(self.bot.runtimes["main"].queue._queue), ["main revised"])
+        self.bot.runtimes["main"].data["archived"] = True
+        with self.assertRaises(ValueError):
+            await dispatch(self.bot, "/api/queue/edit", {
+                "session": "main", "id": items[0]["id"], "text": "new", "expectedText": "main revised"})
+
+    async def test_concurrent_edit_rejects_overwrite_and_worker_executes_saved_content(self):
+        items = await self.fill("original")
+        edits = await asyncio.gather(
+            self.bot.queued.edit(items[0]["id"], "first revision", "original"),
+            self.bot.queued.edit(items[0]["id"], "second revision", "original"),
+            return_exceptions=True)
+        self.assertEqual(sum(isinstance(result, ValueError) for result in edits), 1)
+        saved = self.bot.session_state["pending"][0]
+        worker = asyncio.create_task(self.bot.work("main"))
+        try:
+            for _ in range(100):
+                if self.bot.active:
+                    break
+                await asyncio.sleep(.001)
+            turns = [args for method, args in self.bot.codex.calls if method == "turn/start"]
+            self.assertEqual([args["input"][0]["text"] for args in turns], [saved])
+            with self.assertRaises(ValueError):
+                await self.bot.queued.edit(items[0]["id"], "too late", saved)
+            await self.bot.event({"method": "turn/completed", "params": {
+                "threadId": self.bot.session_state["thread_id"], "turn": {"status": "completed"}}})
+            await asyncio.wait_for(self.bot.queue.join(), .5)
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
     async def test_apply_to_running_turn_removes_only_selected_request(self):
         items = await self.fill("later", "apply me")
         self.bot.runtime.active = "turn-a"
@@ -76,6 +153,90 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("apply me", self.bot.session_state["inflight"])
         restarted = Bot(self.bot.config, self.base)
         self.assertEqual(list(restarted.queue._queue), ["later"])
+
+    async def test_reorder_preserves_ids_text_and_accounting_across_restart(self):
+        items = await self.fill("same", "same", "last")
+        ids = [item["id"] for item in items]
+        self.bot.runtime.active = "running"
+        self.bot.session_state["inflight"] = "original"
+        result = await dispatch(self.bot, "/api/queue/reorder", {"ids": [ids[2], ids[0], ids[1]], "expectedIds": ids})
+        self.assertEqual([row["id"] for row in result["items"]], [ids[2], ids[0], ids[1]])
+        self.assertEqual(list(self.bot.queue._queue), ["last", "same", "same"])
+        self.assertEqual(self.bot.queue._unfinished_tasks, 3)
+        self.assertTrue(self.bot.queue.available.is_set())
+        self.assertEqual(self.bot.runtime.active, "running")
+        self.assertEqual(self.bot.session_state["inflight"], "original")
+        restarted = Bot(self.bot.config, self.base)
+        self.assertEqual(restarted.session_state["pending_ids"], [ids[2], ids[0], ids[1]])
+        self.assertEqual(list(restarted.queue._queue), ["last", "same", "same"])
+
+    async def test_reorder_rejects_invalid_permutations_and_stale_orders(self):
+        items = await self.fill("first", "second")
+        ids = [item["id"] for item in items]
+        for values in [None, "bad", [ids[0]], [ids[0], ids[0]], [ids[0], "missing"], [None, ids[1]],
+                       [1, ids[1]], [[]], ["x" * 129], [str(i) for i in range(21)]]:
+            for new_ids, expected_ids in [(values, ids), (ids, values)]:
+                with self.assertRaises(ValueError):
+                    await self.bot.queued.reorder(new_ids, expected_ids)
+        await self.bot.enqueue("new request")
+        with self.assertRaisesRegex(ValueError, "대기열이 바뀌었습니다"):
+            await self.bot.queued.reorder(ids[::-1], ids)
+        self.assertEqual(list(self.bot.queue._queue), ["first", "second", "new request"])
+        current_ids = list(self.bot.session_state["pending_ids"])
+        await self.bot.queued.delete(ids[0])
+        with self.assertRaises(ValueError):
+            await self.bot.queued.reorder(current_ids[::-1], current_ids)
+        self.assertEqual(list(self.bot.queue._queue), ["second", "new request"])
+
+    async def test_reorder_persistence_failure_keeps_original_order(self):
+        items = await self.fill("first", "second")
+        ids = [item["id"] for item in items]
+        with patch.object(self.bot, "persist", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                await self.bot.queued.reorder(ids[::-1], ids)
+        self.assertEqual(self.bot.session_state["pending_ids"], ids)
+        self.assertEqual(self.bot.session_state["pending"], ["first", "second"])
+        self.assertEqual(list(self.bot.queue._queue), ["first", "second"])
+        self.assertEqual(self.bot.queue._unfinished_tasks, 2)
+
+    async def test_reorder_uses_latest_edited_text_and_is_session_scoped(self):
+        items = await self.fill("first", "second")
+        ids = [item["id"] for item in items]
+        await self.bot.queued.edit(ids[0], "edited", "first")
+        other = self.bot.create_session("other")
+        await self.fill("other job")
+        await dispatch(self.bot, "/api/queue/reorder", {"session": "main", "ids": ids[::-1], "expectedIds": ids})
+        self.assertEqual(list(self.bot.runtimes["main"].queue._queue), ["second", "edited"])
+        self.assertEqual(self.bot.state["selected_session"], other)
+        self.assertEqual(list(self.bot.queue._queue), ["other job"])
+        self.bot.runtimes["main"].data["archived"] = True
+        with self.assertRaises(ValueError):
+            await dispatch(self.bot, "/api/queue/reorder", {"session": "main", "ids": ids, "expectedIds": ids[::-1]})
+
+    async def test_worker_executes_new_order_and_stale_drag_cannot_restore_running_item(self):
+        items = await self.fill("first", "second")
+        ids = [item["id"] for item in items]
+        await self.bot.queued.reorder(ids[::-1], ids)
+        worker = asyncio.create_task(self.bot.work("main"))
+        try:
+            for text in ["second", "first"]:
+                for _ in range(100):
+                    if self.bot.active:
+                        break
+                    await asyncio.sleep(.001)
+                turns = [args for method, args in self.bot.codex.calls if method == "turn/start"]
+                self.assertEqual(turns[-1]["input"][0]["text"], text)
+                with self.assertRaises(ValueError):
+                    await self.bot.queued.reorder(ids, ids[::-1])
+                await self.bot.event({"method": "turn/completed", "params": {
+                    "threadId": self.bot.session_state["thread_id"], "turn": {"status": "completed"}}})
+                await asyncio.sleep(.005)
+            await asyncio.wait_for(self.bot.queue.join(), .5)
+            self.assertEqual(self.bot.session_state["pending_ids"], [])
+            self.assertFalse(self.bot.queue.available.is_set())
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
 
     async def test_idle_apply_prioritizes_without_duplicating_queue_entries(self):
         items = await self.fill("first", "second", "chosen")

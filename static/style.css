@@ -123,11 +123,22 @@ body.working #session-status .dot { background: var(--green); box-shadow: 0 0 0 
 #queue-list { list-style: none; padding: 0; margin: 0; }
 .queue-item { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 12px 0 0; background: #ffffff03; }
 .queue-item h3 { margin: 0 0 10px; font-size: 11px; color: #999; }
+.queue-item-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.queue-item-heading h3 { margin: 0; }
+.queue-drag-handle { flex: 0 0 32px; width: 32px; min-height: 40px; padding: 4px; color: #aaa; font-size: 22px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.queue-drag-handle:active { cursor: grabbing; }
+.queue-dragging { background: #ffffff12; outline: 1px solid #ffffff50; border-radius: 8px; }
 .queue-item pre { max-height: 200px; overflow-y: auto; margin: 0; font-family: inherit; color: #ddd; }
 .queue-item-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .queue-item-actions button { min-height: 40px; }
 .queue-remove { color: #d9a09a; }
 #queue-modal .toast { position: absolute; left: 50%; bottom: 12px; max-width: calc(100% - 24px); }
+#queue-edit-modal { position: fixed; inset: 0; margin: auto; width: min(560px, calc(100% - 24px)); max-width: none; max-height: 85dvh; padding: 20px; border: 1px solid #ffffff24; border-radius: 16px; color: #ececec; background: #242424; overflow-y: auto; }
+#queue-edit-modal::backdrop { background: #0009; }
+#queue-edit-title { margin: 0 0 20px; font-size: 16px; }
+#queue-edit-form label { display: block; margin-bottom: 8px; font-size: 12px; color: #aaa; }
+#queue-edit-text { display: block; width: 100%; min-height: 160px; max-height: 50dvh; padding: 12px; border: 1px solid var(--line); border-radius: 10px; color: inherit; background: #191919; font: inherit; line-height: 1.6; resize: vertical; }
+#queue-edit-text:focus { outline: 2px solid #aaa; outline-offset: 2px; }
 #prompt-form { background: #2b2b2b; border: 1px solid #ffffff17; border-radius: 17px; padding: 10px 12px 8px; box-shadow: 0 4px 18px #0000000c; }
 #prompt-form:focus-within { border-color: #ffffff2d; }
 textarea { width: 100%; display: block; resize: none; max-height: 180px; min-height: 56px; padding: 0 6px; border: 0; background: transparent; color: #ececec; line-height: 1.65; font-size: 13px; outline: none; }
