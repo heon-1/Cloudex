@@ -211,7 +211,7 @@ pre { font-family: "SFMono-Regular", Consolas, monospace; white-space: pre-wrap;
 #account-login-link { display: inline-flex; align-items: center; text-decoration: none; }
 #settings label { display: block; font-size: 12px; margin: 24px 0 9px; color: #bbb; }
 select { width: 100%; padding: 12px; background: #2b2b2b; color: #ddd; border: 1px solid #ffffff1a; border-radius: 8px; font-size: 12px; }
-.settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+.settings-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 8px; margin-top: 22px; }
 .fast-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
 .fast-setting > div:first-child { flex: 1; min-width: 0; }
 .fast-setting h3 { margin: 0; font-size: 13px; color: #ddd; }
